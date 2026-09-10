@@ -2,6 +2,15 @@
 
 > **🏗️ 该项目还处于较早期阶段。随时可能发生破坏性变更。**
 
+## Fork 说明（和弦指法工具）
+
+本仓库为 [`yhlooo/pianokits`](https://github.com/yhlooo/pianokits) 的开发副本，在其基础上新增「和弦指法」工具（和弦解析、指法推荐、虚拟键盘考试）。
+
+- **Fork 时间**：2026-09-10
+- **固定 upstream commit**：`2ce1547722c6be9e5e033196fba50cb41080ed1e`（2026-09-07，`feat: 修复进度条拖动和瀑布流不同步的问题`）
+- **新增代码位置**：`src/core/chords/`、`src/core/fingering/`、`src/core/practice/chord-practice.ts`、`src/tools/chord-fingering/`；原有基础设施尽量未改动（仅 `src/tools.ts` 注册新工具、`src/style.css` 追加样式）。
+- 设计文档见 `docs/development/design/20260910-chord-fingering.md`。
+
 MIDI 钢琴工具箱，在线体验： [https://yhlooo.github.io/pianokits](https://yhlooo.github.io/pianokits)
 
 **已实现工具：**
