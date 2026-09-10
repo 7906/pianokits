@@ -48,7 +48,11 @@ export function getChordFingering(req: ChordFingeringRequest): ChordFingering {
   const q = getChordQuality(req.quality)
   const hand = req.hand
   if (hand !== 'right' && hand !== 'left') throw new RangeError(`未知手别：${String(hand)}`)
-  if (!Number.isInteger(req.inversion) || req.inversion < 0 || req.inversion > q.supportedInversions) {
+  if (
+    !Number.isInteger(req.inversion) ||
+    req.inversion < 0 ||
+    req.inversion > q.supportedInversions
+  ) {
     throw new RangeError(
       `和弦 ${req.root}${q.symbols[0]} 不支持转位 ${req.inversion}（有效范围 0–${q.supportedInversions}）`,
     )
@@ -60,8 +64,8 @@ export function getChordFingering(req: ChordFingeringRequest): ChordFingering {
   const key = overrideKey(q.id, hand, req.inversion)
   const custom = req.overrides ? findOverride(req.overrides, key) : undefined
   if (custom !== undefined) {
-  return finish(q.id, req.root, req.inversion, hand, custom, 'override')
-}
+    return finish(q.id, req.root, req.inversion, hand, custom, 'override')
+  }
 
   const builtin = profile.overrides.get(key)
   if (builtin !== undefined) {

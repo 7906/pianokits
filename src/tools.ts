@@ -11,4 +11,12 @@ export const tools: Tool[] = [
       return await createApp(host)
     },
   },
+  {
+    id: 'chord-fingering',
+    name: '和弦指法',
+    async mount(host) {
+      const { mountChordFingering } = await import('./tools/chord-fingering/mount')
+      return mountChordFingering(host)
+    },
+  },
 ]

@@ -50,14 +50,8 @@ export function getChordNotes(
   // 原位闭位：根音 + 各音程（升序，intervals[0] = 0）
   const tones = q.intervals.map((i) => base + i)
   // 第 k 转位：最低 k 个音逐个移高八度（第一转位把最低音移到顶部，依此循环）
-  const moved = [
-    ...tones.slice(inversion),
-    ...tones.slice(0, inversion).map((p) => p + 12),
-  ]
-  const degrees = [
-    ...q.noteDegrees.slice(inversion),
-    ...q.noteDegrees.slice(0, inversion),
-  ]
+  const moved = [...tones.slice(inversion), ...tones.slice(0, inversion).map((p) => p + 12)]
+  const degrees = [...q.noteDegrees.slice(inversion), ...q.noteDegrees.slice(0, inversion)]
   return {
     pitches: moved,
     degrees,

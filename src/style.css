@@ -1691,6 +1691,293 @@ input[type='range']::-moz-range-thumb {
   stroke-linecap: round;
 }
 
+/* ---------- 和弦指法工具（chord-fingering） ----------
+   纵向滚动布局；控件行自动折行，宽屏（iPad 横屏）下键盘贴底全宽 */
+.chordf {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.chordf__inner {
+  margin: auto;
+  width: 100%;
+  max-width: 1180px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 20px 28px;
+}
+
+/* 控件面板 */
+.chordf__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+}
+
+.chordf__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chordf__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chordf__grouplabel {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  margin-right: 2px;
+}
+
+/* 搜索行 */
+.chordf__search {
+  flex: 1 1 260px;
+  min-width: 200px;
+  min-height: 44px; /* 触摸目标 */
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-0);
+  font-size: 1rem;
+  padding: 0 14px;
+  outline: none;
+}
+
+.chordf__search:focus {
+  border-color: var(--accent);
+}
+
+.chordf__go {
+  min-height: 44px;
+  padding: 0 22px;
+  background: var(--accent);
+  color: #241a0c;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--r-md);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.chordf__go:hover {
+  background: var(--accent-hover);
+}
+
+.chordf__go:active {
+  background: var(--accent-pressed);
+}
+
+/* chip：根音 / 和弦类型 / 转位 / 分段，全部按触摸目标放大 */
+.chordf__chip {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.chordf__chip:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.chordf__chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+.chordf__chip[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 分段控件 */
+.chordf__seg {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+/* 移调步进 */
+.chordf__step {
+  min-width: 44px;
+  min-height: 44px;
+  background: var(--bg-2);
+  color: var(--text-0);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chordf__step:hover {
+  background: var(--bg-3);
+}
+
+.chordf__step[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chordf__transpose-val {
+  min-width: 2.5em;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+}
+
+.chordf__reset {
+  min-height: 44px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-2);
+  border: none;
+  border-radius: var(--r-md);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.chordf__reset:hover {
+  color: var(--text-0);
+}
+
+/* 标题区：和弦符号大字 + 副信息（固定高度避免浏览/考试切换跳动） */
+.chordf__headline {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 6.5rem;
+  justify-content: center;
+}
+
+.chordf__headline-main {
+  font-family: var(--font-display);
+  font-size: 2.75rem;
+  line-height: 1.15;
+  color: var(--text-0);
+}
+
+.chordf__headline-sub {
+  font-size: 0.9375rem;
+  color: var(--text-1);
+}
+
+/* 反馈 / 考试条 */
+.chordf__feedback {
+  text-align: center;
+  color: var(--danger);
+  font-size: 0.9375rem;
+}
+
+.chordf__feedback[hidden] {
+  display: none;
+}
+
+.chordf__exambar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.chordf__exambar[hidden] {
+  display: none;
+}
+
+.chordf__streak {
+  font-size: 1rem;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+.chordf__exam-btn {
+  min-height: 44px;
+  padding: 0 18px;
+  background: var(--bg-2);
+  color: var(--text-0);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+
+.chordf__exam-btn:hover {
+  background: var(--bg-3);
+}
+
+.chordf__exam-btn--ghost {
+  background: transparent;
+  color: var(--text-1);
+}
+
+.chordf__midi-status {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
+/* 键盘容器：88 键 + 指法徽标层；触摸弹奏时阻止页面滚动/缩放 */
+.chord-kb {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.chord-kb__badges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 指法数字徽标：left/top 由 TS 按键位几何百分比定位，白键贴底缘、黑键在下段 */
+.chord-kb__badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 1.5em;
+  height: 1.5em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(26, 25, 23, 0.82);
+  border: 1px solid rgba(217, 164, 91, 0.85);
+  color: var(--accent-hover);
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 降低动效偏好 ---------- */
 @media (prefers-reduced-motion: reduce) {
   *,

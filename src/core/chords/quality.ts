@@ -85,7 +85,12 @@ export const CHORD_QUALITIES: readonly ChordQuality[] = [
   seventh('dominant7', ['7'], [0, 4, 7, 10], ['1', '3', '5', 'b7']),
   seventh('major7', ['maj7', 'M7', 'Δ7'], [0, 4, 7, 11], ['1', '3', '5', '7']),
   seventh('minor7', ['m7', 'min7', '-7'], [0, 3, 7, 10], ['1', 'b3', '5', 'b7']),
-  seventh('halfDiminished7', ['m7b5', 'min7b5', '-7b5', 'ø', 'ø7'], [0, 3, 6, 10], ['1', 'b3', 'b5', 'b7']),
+  seventh(
+    'halfDiminished7',
+    ['m7b5', 'min7b5', '-7b5', 'ø', 'ø7'],
+    [0, 3, 6, 10],
+    ['1', 'b3', 'b5', 'b7'],
+  ),
 ]
 
 const BY_ID = new Map<string, ChordQuality>(CHORD_QUALITIES.map((q) => [q.id, q]))

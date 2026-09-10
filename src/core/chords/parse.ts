@@ -67,7 +67,9 @@ export interface ParsedChordSymbol {
  * 同一质量可由多个符号触发（aug 与 + 等），跨条目共享 quality id。
  */
 const SUFFIX_TABLE: ReadonlyArray<readonly [suffix: string, quality: ChordQualityId]> = [
-  ...CHORD_QUALITIES.flatMap((q) => q.symbols.filter((s) => s !== '').map((s) => [s, q.id] as const)),
+  ...CHORD_QUALITIES.flatMap((q) =>
+    q.symbols.filter((s) => s !== '').map((s) => [s, q.id] as const),
+  ),
 ].sort((a, b) => b[0].length - a[0].length)
 
 const ROOT_RE = /^([A-Ga-g])([#b♯♭]?)([\s\S]*)$/

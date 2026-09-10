@@ -29,26 +29,35 @@ describe('getChordFingering：12 根音 × 全部质量 × 全部转位 × 左�
   for (const quality of CHORD_QUALITIES) {
     for (const inversion of allInversions(quality)) {
       for (const hand of HANDS) {
-        it.each(ROOTS)(`${hand[0].toUpperCase()}H %s${quality.symbols[0]} 转位 ${inversion}`, (root) => {
-          const notes = getChordNotes(root, quality, inversion)
-          const f = getChordFingering({ root, quality: quality.id, inversion, hand })
-          // 指法数量与音符数量一致
-          expect(f.fingers.length).toBe(notes.pitches.length)
-          // 手指编号均在 1–5
-          expect(f.fingers.every((x) => Number.isInteger(x) && x >= 1 && x <= 5)).toBe(true)
-          expect(f.source).toBe('pattern')
-          expect(f.quality).toBe(quality.id)
-          expect(f.hand).toBe(hand)
-          expect(f.inversion).toBe(inversion)
-        })
+        it.each(ROOTS)(
+          `${hand[0].toUpperCase()}H %s${quality.symbols[0]} 转位 ${inversion}`,
+          (root) => {
+            const notes = getChordNotes(root, quality, inversion)
+            const f = getChordFingering({ root, quality: quality.id, inversion, hand })
+            // 指法数量与音符数量一致
+            expect(f.fingers.length).toBe(notes.pitches.length)
+            // 手指编号均在 1–5
+            expect(f.fingers.every((x) => Number.isInteger(x) && x >= 1 && x <= 5)).toBe(true)
+            expect(f.source).toBe('pattern')
+            expect(f.quality).toBe(quality.id)
+            expect(f.hand).toBe(hand)
+            expect(f.inversion).toBe(inversion)
+          },
+        )
       }
     }
   }
 
   it('standard profile：右手三和弦规则（原位/一转 1-3-5，二转 1-2-5）', () => {
-    expect(getChordFingering({ root: 'C', quality: 'major', inversion: 0, hand: 'right' }).fingers).toEqual([1, 3, 5])
-    expect(getChordFingering({ root: 'C', quality: 'major', inversion: 1, hand: 'right' }).fingers).toEqual([1, 3, 5])
-    expect(getChordFingering({ root: 'C', quality: 'major', inversion: 2, hand: 'right' }).fingers).toEqual([1, 2, 5])
+    expect(
+      getChordFingering({ root: 'C', quality: 'major', inversion: 0, hand: 'right' }).fingers,
+    ).toEqual([1, 3, 5])
+    expect(
+      getChordFingering({ root: 'C', quality: 'major', inversion: 1, hand: 'right' }).fingers,
+    ).toEqual([1, 3, 5])
+    expect(
+      getChordFingering({ root: 'C', quality: 'major', inversion: 2, hand: 'right' }).fingers,
+    ).toEqual([1, 2, 5])
   })
 
   it('standard profile：左手三和弦从 5 指开始、1 指结束', () => {
@@ -104,13 +113,31 @@ describe('profile', () => {
 
   it('small-hand：已是 1-2-5 的第二转位不变，七和弦保持标准表', () => {
     expect(
-      getChordFingering({ root: 'C', quality: 'major', inversion: 2, hand: 'right', profile: 'small-hand' }).fingers,
+      getChordFingering({
+        root: 'C',
+        quality: 'major',
+        inversion: 2,
+        hand: 'right',
+        profile: 'small-hand',
+      }).fingers,
     ).toEqual([1, 2, 5])
     expect(
-      getChordFingering({ root: 'C', quality: 'dominant7', inversion: 0, hand: 'right', profile: 'small-hand' }).fingers,
+      getChordFingering({
+        root: 'C',
+        quality: 'dominant7',
+        inversion: 0,
+        hand: 'right',
+        profile: 'small-hand',
+      }).fingers,
     ).toEqual([1, 2, 3, 5])
     expect(
-      getChordFingering({ root: 'C', quality: 'dominant7', inversion: 3, hand: 'right', profile: 'small-hand' }).fingers,
+      getChordFingering({
+        root: 'C',
+        quality: 'dominant7',
+        inversion: 3,
+        hand: 'right',
+        profile: 'small-hand',
+      }).fingers,
     ).toEqual([1, 2, 3, 4])
   })
 
@@ -118,7 +145,13 @@ describe('profile', () => {
     for (const quality of CHORD_QUALITIES) {
       for (const inversion of allInversions(quality)) {
         for (const hand of HANDS) {
-          const f = getChordFingering({ root: 'F#', quality: quality.id, inversion, hand, profile: 'small-hand' })
+          const f = getChordFingering({
+            root: 'F#',
+            quality: quality.id,
+            inversion,
+            hand,
+            profile: 'small-hand',
+          })
           expect(f.fingers.length).toBe(quality.noteCount)
           expect(f.fingers.every((x) => x >= 1 && x <= 5)).toBe(true)
         }
@@ -128,11 +161,33 @@ describe('profile', () => {
 
   it('custom：例外覆盖指定和弦（其余回落 standard）', () => {
     const custom = createCustomProfile([[overrideKey('major', 'right', 0), [1, 4, 5]]])
-    expect(getChordFingering({ root: 'C', quality: 'major', inversion: 0, hand: 'right', profile: custom })).toEqual(
-      expect.objectContaining({ fingers: [1, 4, 5], source: 'override' }),
-    )
-    expect(getChordFingering({ root: 'C', quality: 'minor', inversion: 0, hand: 'right', profile: custom }).fingers).toEqual([1, 3, 5])
-    expect(getChordFingering({ root: 'D', quality: 'major', inversion: 1, hand: 'right', profile: custom }).fingers).toEqual([1, 3, 5])
+    expect(
+      getChordFingering({
+        root: 'C',
+        quality: 'major',
+        inversion: 0,
+        hand: 'right',
+        profile: custom,
+      }),
+    ).toEqual(expect.objectContaining({ fingers: [1, 4, 5], source: 'override' }))
+    expect(
+      getChordFingering({
+        root: 'C',
+        quality: 'minor',
+        inversion: 0,
+        hand: 'right',
+        profile: custom,
+      }).fingers,
+    ).toEqual([1, 3, 5])
+    expect(
+      getChordFingering({
+        root: 'D',
+        quality: 'major',
+        inversion: 1,
+        hand: 'right',
+        profile: custom,
+      }).fingers,
+    ).toEqual([1, 3, 5])
   })
 
   it('调用方临时覆盖优先于 profile 内置覆盖', () => {
@@ -149,14 +204,30 @@ describe('profile', () => {
   })
 
   it('standard profile 对象直传与 id 等价', () => {
-    const a = getChordFingering({ root: 'C', quality: 'major7', inversion: 1, hand: 'right', profile: 'standard' })
-    const b = getChordFingering({ root: 'C', quality: 'major7', inversion: 1, hand: 'right', profile: STANDARD_PROFILE })
+    const a = getChordFingering({
+      root: 'C',
+      quality: 'major7',
+      inversion: 1,
+      hand: 'right',
+      profile: 'standard',
+    })
+    const b = getChordFingering({
+      root: 'C',
+      quality: 'major7',
+      inversion: 1,
+      hand: 'right',
+      profile: STANDARD_PROFILE,
+    })
     expect(a.fingers).toEqual(b.fingers)
   })
 
   it('非法手指序列的覆盖抛 RangeError', () => {
-    expect(() => createCustomProfile([[overrideKey('major', 'right', 0), [1, 9, 5]]])).toThrow(RangeError)
-    expect(() => createCustomProfile([[overrideKey('major', 'right', 0), [1, 0, 5]]])).toThrow(RangeError)
+    expect(() => createCustomProfile([[overrideKey('major', 'right', 0), [1, 9, 5]]])).toThrow(
+      RangeError,
+    )
+    expect(() => createCustomProfile([[overrideKey('major', 'right', 0), [1, 0, 5]]])).toThrow(
+      RangeError,
+    )
     expect(() =>
       getChordFingering({
         root: 'C',
@@ -170,7 +241,13 @@ describe('profile', () => {
 
   it('未知 profile id 抛 RangeError', () => {
     expect(() =>
-      getChordFingering({ root: 'C', quality: 'major', inversion: 0, hand: 'right', profile: 'nope' }),
+      getChordFingering({
+        root: 'C',
+        quality: 'major',
+        inversion: 0,
+        hand: 'right',
+        profile: 'nope',
+      }),
     ).toThrow(RangeError)
   })
 })
@@ -183,14 +260,18 @@ describe('getChordFingering：非法输入', () => {
   })
 
   it('未知质量抛 RangeError', () => {
-    expect(() => getChordFingering({ root: 'C', quality: 'nope' as never, inversion: 0, hand: 'right' })).toThrow(
-      RangeError,
-    )
+    expect(() =>
+      getChordFingering({ root: 'C', quality: 'nope' as never, inversion: 0, hand: 'right' }),
+    ).toThrow(RangeError)
   })
 
   it('非法转位抛 RangeError（三和弦无第三转位）', () => {
-    expect(() => getChordFingering({ root: 'C', quality: 'major', inversion: 3, hand: 'right' })).toThrow(RangeError)
-    expect(() => getChordFingering({ root: 'C', quality: 'major', inversion: -1, hand: 'right' })).toThrow(RangeError)
+    expect(() =>
+      getChordFingering({ root: 'C', quality: 'major', inversion: 3, hand: 'right' }),
+    ).toThrow(RangeError)
+    expect(() =>
+      getChordFingering({ root: 'C', quality: 'major', inversion: -1, hand: 'right' }),
+    ).toThrow(RangeError)
     // 七和弦第三转位必须显式可用（规格 §7）
     expect(
       getChordFingering({ root: 'C', quality: 'dominant7', inversion: 3, hand: 'right' }).fingers,
