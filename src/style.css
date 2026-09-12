@@ -1942,6 +1942,15 @@ input[type='range']::-moz-range-thumb {
 .chordf__midi-status {
   font-size: 0.8125rem;
   color: var(--text-2);
+  max-width: 100%;
+  line-height: 1.4;
+}
+
+/* 练习条按钮激活态（考试「提示」打开时） */
+.chordf__exam-btn.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
 }
 
 /* 键盘容器：88 键 + 指法徽标层；触摸弹奏时阻止页面滚动/缩放 */

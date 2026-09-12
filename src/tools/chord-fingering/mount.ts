@@ -16,10 +16,13 @@ import { buildChordKeyboard, type ChordKeyboard, type ExamKeyState } from './cho
 import { midiStatusText, startMidiInput } from './midi-input'
 
 /**
- * 「和弦指法」工具页（规格 §9 MVP）：
- * 和弦搜索 / 根音 / 类型 / 转位 / 左右手 / profile / 88 键显示 / 音符高亮 /
- * 指法数字 / 半音移调 / 虚拟键盘考试模式，以及 MIDI 适配器接入（MidiInput →
- * Practice Engine）。和弦公式与指法规则全部来自 core 模块，本文件只做展示与输入适配。
+ * 「和弦指法」工具页（规格 §9 MVP + 跟弹练习）：
+ * 三种模式——
+ * - 浏览：任选和弦查看指法；屏幕键盘可点按试听，联琴后弹的键实时点亮；
+ * - 跟弹：目标和弦与其指法常亮显示，在琴上（或屏幕键盘）照着弹，弹的键实时点亮、
+ *   弹错标红、弹对闪绿并自动下一题——「看着目标找键」的主动训练；
+ * - 考试：盲答（不显示目标），可用「提示」临时亮出目标；判定与跟弹同一引擎。
+ * MIDI 经适配器汇入同一练习引擎（MidiInput → Practice Engine），本文件只做展示与输入适配。
  *
  * 触摸适配：控件为大号 chip、键盘容器关闭触摸滚动（touch-action: none），
  * pointer capture 保证滑出键面也能抬起；优先横屏布局（样式见 style.css）。
@@ -43,6 +46,8 @@ const HAND_NAMES: Readonly<Record<Hand, string>> = { right: '右手', left: '左
 const MIN_TRANSPOSE = -11
 const MAX_TRANSPOSE = 11
 
+type ToolMode = 'browse' | 'guided' | 'exam'
+
 interface ToolState {
   root: NoteName
   quality: ChordQualityId
@@ -50,7 +55,7 @@ interface ToolState {
   hand: Hand
   profileId: 'standard' | 'small-hand'
   transpose: number
-  mode: 'browse' | 'exam'
+  mode: ToolMode
 }
 
 interface ExamRun {
@@ -94,11 +99,12 @@ export function mountChordFingering(host: HTMLElement): () => void {
   const engine = new ChordPracticeEngine()
   const keyboard: ChordKeyboard = buildChordKeyboard()
 
-  // —— 考试会话 ——
+  // —— 练习会话 ——
   let question: ExamRun | null = null
   let streak = 0
   let total = 0
   let nextTimer: number | undefined
+  let hintOn = false // 考试模式的「提示」：临时亮出目标与指法
   const virtualHeld = new Set<number>()
   let midiHeld: Set<number> = new Set()
   let stopMidi: (() => void) | null = null
@@ -121,7 +127,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
       state.quality = parsed.quality
       state.inversion = 0
       setFeedback(null)
-      if (state.mode === 'exam') exitExam()
+      if (state.mode !== 'browse') exitPractice()
       renderAll()
     } catch (e) {
       if (e instanceof ChordParseError) {
@@ -146,7 +152,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     (h) => {
       if (state.hand === h) return
       state.hand = h
-      if (state.mode === 'exam') ask() // 手别变化：换一道新题
+      if (state.mode !== 'browse') ask() // 手别变化：换一道新题
       renderAll()
     },
   )
@@ -159,13 +165,13 @@ export function mountChordFingering(host: HTMLElement): () => void {
       renderAll()
     },
   )
-  const modeSeg = makeSeg<'browse' | 'exam'>(
-    ['browse', 'exam'] as const,
-    (m) => (m === 'browse' ? '浏览' : '考试'),
+  const modeSeg = makeSeg<ToolMode>(
+    ['browse', 'guided', 'exam'] as const,
+    (m) => (m === 'browse' ? '浏览' : m === 'guided' ? '跟弹' : '考试'),
     (m) => {
       if (state.mode === m) return
-      if (m === 'exam') startExam()
-      else exitExam()
+      if (m === 'browse') exitPractice()
+      else startPractice(m)
     },
   )
 
@@ -174,11 +180,11 @@ export function mountChordFingering(host: HTMLElement): () => void {
     const next = state.transpose + d
     if (next < MIN_TRANSPOSE || next > MAX_TRANSPOSE) return
     state.transpose = next
-    if (state.mode === 'exam' && question !== null) {
+    if (state.mode !== 'browse' && question !== null) {
       // 题目音高同步平移（指法不变）
       question = { ...question, pitches: question.pitches.map((p) => p + d) }
       engine.setQuestion(question.pitches)
-      renderExam()
+      renderPractice()
     }
     renderAll()
   }
@@ -200,6 +206,17 @@ export function mountChordFingering(host: HTMLElement): () => void {
     '重置',
   )
 
+  // MIDI 连接：常驻面板（浏览/跟弹/考试都可见可用），状态文字给出可执行的下一步指引
+  const midiBtn = el('button', { class: 'chordf__exam-btn', onclick: toggleMidi }, '连接 MIDI 键盘')
+  const midiStatus = el('span', { class: 'chordf__midi-status' })
+  const midiGroup = el(
+    'div',
+    { class: 'chordf__group' },
+    el('span', { class: 'chordf__grouplabel' }, '联琴'),
+    midiBtn,
+    midiStatus,
+  )
+
   const headlineMain = el('div', { class: 'chordf__headline-main' })
   const headlineSub = el('div', { class: 'chordf__headline-sub' })
   const headline = el('div', { class: 'chordf__headline' }, headlineMain, headlineSub)
@@ -211,12 +228,25 @@ export function mountChordFingering(host: HTMLElement): () => void {
   }
 
   const examStreak = el('span', { class: 'chordf__streak' })
+  const hintBtn = el(
+    'button',
+    {
+      class: 'chordf__exam-btn',
+      title: '临时显示目标键位与指法',
+      onclick: () => {
+        hintOn = !hintOn
+        hintBtn.classList.toggle('is-active', hintOn)
+        renderPractice()
+      },
+    },
+    '提示',
+  )
   const nextBtn = el(
     'button',
     {
       class: 'chordf__exam-btn',
       onclick: () => {
-        if (state.mode === 'exam' && !engine.state.solved) streak = 0 // 未答完跳过：连对清零
+        if (state.mode !== 'browse' && !engine.state.solved) streak = 0 // 未答完跳过：连对清零
         ask()
       },
     },
@@ -224,19 +254,16 @@ export function mountChordFingering(host: HTMLElement): () => void {
   )
   const exitBtn = el(
     'button',
-    { class: 'chordf__exam-btn chordf__exam-btn--ghost', onclick: () => exitExam() },
-    '退出考试',
+    { class: 'chordf__exam-btn chordf__exam-btn--ghost', onclick: () => exitPractice() },
+    '退出练习',
   )
-  const midiBtn = el('button', { class: 'chordf__exam-btn', onclick: toggleMidi }, '连接 MIDI 键盘')
-  const midiStatus = el('span', { class: 'chordf__midi-status' })
   const examBar = el(
     'div',
     { class: 'chordf__exambar', hidden: true },
     examStreak,
     nextBtn,
+    hintBtn,
     exitBtn,
-    midiBtn,
-    midiStatus,
   )
 
   const inner = el(
@@ -262,6 +289,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
           transposeReset,
         ),
         modeSeg.el,
+        midiGroup,
       ),
     ),
     headline,
@@ -279,7 +307,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
   })
   const offSolved = engine.onSolved(() => {
     const q = question
-    if (state.mode !== 'exam' || q === null) return
+    if (state.mode === 'browse' || q === null) return
     streak += 1
     total += 1
     // 解答成立：目标键闪绿并亮出指法
@@ -293,17 +321,19 @@ export function mountChordFingering(host: HTMLElement): () => void {
 
   function syncHeld(): void {
     engine.setHeld(new Set([...virtualHeld, ...midiHeld]))
-    if (state.mode === 'exam') renderExam()
-    else renderBrowse()
+    if (state.mode === 'browse') renderBrowse()
+    else renderPractice()
   }
 
-  function startExam(): void {
-    state.mode = 'exam'
+  function startPractice(mode: 'guided' | 'exam'): void {
+    state.mode = mode
     streak = 0
     total = 0
+    hintOn = false
     virtualHeld.clear()
     engine.releaseAll()
     examBar.hidden = false
+    hintBtn.hidden = mode !== 'exam'
     ask()
     renderAll()
   }
@@ -314,19 +344,22 @@ export function mountChordFingering(host: HTMLElement): () => void {
       nextTimer = undefined
     }
     question = nextExamQuestion(state.hand, state.transpose)
+    hintOn = false
+    hintBtn.classList.remove('is-active')
     virtualHeld.clear()
     engine.setQuestion(question.pitches)
-    renderExam()
+    renderPractice()
     renderExamBar()
   }
 
-  function exitExam(): void {
+  function exitPractice(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
       nextTimer = undefined
     }
     state.mode = 'browse'
     question = null
+    hintOn = false
     engine.reset()
     virtualHeld.clear()
     examBar.hidden = true
@@ -347,7 +380,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     midiStatus.textContent = '连接中…'
     stopMidi = startMidiInput((ev) => {
       midiHeld = new Set(ev.held)
-      midiStatus.textContent = midiStatusText(ev.status, ev.detail)
+      midiStatus.textContent = midiStatusText(ev.status, ev.detail, ev.inputs)
       if (ev.status === 'error') {
         // 连接失败：回收按钮态（软超时保持等待，不自动断开）
         stopMidi?.()
@@ -371,11 +404,11 @@ export function mountChordFingering(host: HTMLElement): () => void {
     )
   }
 
-  /** 选择根音 / 类型 / 转位都会退出考试回到浏览（考试题目独立随机生成） */
-  function pickAndExitExam(apply: () => void): () => void {
+  /** 选择根音 / 类型 / 转位会退出练习回到浏览（练习题目独立随机生成） */
+  function pickAndExitPractice(apply: () => void): () => void {
     return () => {
       apply()
-      if (state.mode === 'exam') exitExam()
+      if (state.mode !== 'browse') exitPractice()
       else renderAll()
     }
   }
@@ -387,7 +420,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
         chip(
           n,
           noteNameToPc(n) === rootPc,
-          pickAndExitExam(() => (state.root = n)),
+          pickAndExitPractice(() => (state.root = n)),
         ),
       ),
     )
@@ -396,7 +429,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
         chip(
           `${QUALITY_LABELS[q.id]}${q.symbols[0] === '' ? '' : ` ${q.symbols[0]}`}`,
           state.quality === q.id,
-          pickAndExitExam(() => {
+          pickAndExitPractice(() => {
             state.quality = q.id
             if (state.inversion > q.supportedInversions) state.inversion = 0
           }),
@@ -410,7 +443,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
         chip(
           INVERSION_NAMES[i],
           state.inversion === i,
-          pickAndExitExam(() => (state.inversion = i)),
+          pickAndExitPractice(() => (state.inversion = i)),
         ),
       ),
     )
@@ -449,10 +482,10 @@ export function mountChordFingering(host: HTMLElement): () => void {
       .filter(Boolean)
       .join(' · ')
 
-    // 涉及音符半透明高亮 + 指法数字徽标；用户按下：和弦内变实、按错标红
+    // 涉及音符半透明高亮 + 指法数字徽标；用户按下（屏幕或 MIDI 琴）：和弦内变实、按错标红
     const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
     for (const p of pitches) lit.set(p, { state: 'held', alpha: 0.45, glow: 0 })
-    for (const p of virtualHeld) {
+    for (const p of [...virtualHeld, ...midiHeld]) {
       lit.set(
         p,
         lit.has(p)
@@ -464,30 +497,40 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.setBadges(new Map(pitches.map((p, i) => [p, fingering.fingers[i]])))
   }
 
-  function renderExam(): void {
-    if (question === null) return
+  /** 跟弹 / 考试共用渲染；showTarget = 目标键位与指法是否可见（跟弹恒显，考试看提示） */
+  function renderPractice(): void {
+    const q = question
+    if (q === null || state.mode === 'browse') return
     const st = engine.state
-    headlineMain.textContent = `请弹奏：${chordSymbol(question.root, question.quality)}`
-    headlineSub.textContent = `${INVERSION_NAMES[question.inversion]} · ${HAND_NAMES[question.hand]}${
-      state.transpose !== 0 ? ` · 移调 ${state.transpose > 0 ? '+' : ''}${state.transpose}` : ''
-    }`
+    headlineMain.textContent = `请弹奏：${chordSymbol(q.root, q.quality)}`
+    headlineSub.textContent = [
+      INVERSION_NAMES[q.inversion],
+      HAND_NAMES[q.hand],
+      state.transpose !== 0 ? `移调 ${state.transpose > 0 ? '+' : ''}${state.transpose}` : '',
+      state.mode === 'guided' ? '照着亮键弹，弹对自动下一题' : '凭记忆弹；「提示」可临时亮出键位',
+    ]
+      .filter(Boolean)
+      .join(' · ')
 
     if (st.solved) return // onSolved 已画绿色与指法
+
+    const showTarget = state.mode === 'guided' || hintOn
     const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+    if (showTarget) {
+      for (const p of q.pitches) {
+        if (!st.held.has(p)) lit.set(p, { state: 'held', alpha: 0.35, glow: 0 })
+      }
+    }
     for (const p of st.held) lit.set(p, { state: 'held', alpha: 1, glow: 0.3 })
     for (const p of st.wrong) lit.set(p, { state: 'wrong', alpha: 1, glow: 0.6 })
     keyboard.paint(lit)
-    keyboard.setBadges(new Map()) // 考试中不亮指法，避免提示答案
+    keyboard.setBadges(showTarget ? new Map(q.pitches.map((p, i) => [p, q.fingers[i]])) : new Map())
   }
 
   function renderAll(): void {
     renderRows()
-    if (state.mode === 'exam') {
-      renderExam()
-      renderExamBar()
-    } else {
-      renderBrowse()
-    }
+    if (state.mode === 'browse') renderBrowse()
+    else renderPractice()
   }
 
   renderAll()

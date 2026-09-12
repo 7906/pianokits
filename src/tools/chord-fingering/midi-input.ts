@@ -8,6 +8,8 @@ import { CONNECT_TIMEOUT_MS } from '../../core/midi/connection'
  *
  * 连接超时采用与调试工具一致的软超时：CONNECT_TIMEOUT_MS 未返回时先提示
  * “连接超时”，但不放弃在途请求（晚到的成功结果仍照常接管）。
+ * 事件携带已连接输入设备名列表——设备插入/拔出（statechange）后刷新，
+ * UI 据此显示「连的到底是什么」，方便排查 FP-30X 未被识别类问题。
  */
 
 export type MidiAdapterStatus =
@@ -17,31 +19,48 @@ export interface MidiAdapterEvent {
   status: MidiAdapterStatus
   /** 当前按下的音高（每次按键事件后全量推送） */
   held: readonly number[]
+  /** 已授权访问的 MIDI 输入设备名列表（连接成功后返回；空 = 未检测到设备） */
+  inputs: readonly string[]
   /** error / timeout 时的补充说明 */
   detail?: string
 }
 
-const STATUS_LABEL: Readonly<Record<MidiAdapterStatus, string>> = {
-  idle: '未连接',
-  connecting: '连接中…',
-  connected: '已连接',
-  timeout: '连接超时（仍在等待授权返回）',
-  denied: '授权被拒绝',
-  unsupported: '当前浏览器不支持 Web MIDI',
-  error: '连接失败',
-}
-
-export function midiStatusText(status: MidiAdapterStatus, detail?: string): string {
-  return detail ? `${STATUS_LABEL[status]}：${detail}` : STATUS_LABEL[status]
+/**
+ * 面向用户的状态文案：不裸抛术语，把「下一步该做什么」写进提示
+ * （unsupported 直接给 iPad/桌面双路径指引）。
+ */
+export function midiStatusText(
+  status: MidiAdapterStatus,
+  detail?: string,
+  inputs?: readonly string[],
+): string {
+  switch (status) {
+    case 'connecting':
+      return '连接中…'
+    case 'connected':
+      return inputs && inputs.length > 0
+        ? `已连接 · ${inputs.join('、')}`
+        : '已授权，未检测到输入设备（确认琴已开机并连接后自动识别）'
+    case 'timeout':
+      return '连接超时（仍在等待授权返回，可稍候或在浏览器弹窗里允许）'
+    case 'denied':
+      return 'MIDI 授权被拒绝：在浏览器站点设置里允许 MIDI 后重试'
+    case 'unsupported':
+      return '此浏览器不支持 Web MIDI（iPad 的 Safari/Chrome 均不支持）· iPad 请用 Web MIDI Browser App，电脑请用 Chrome/Edge'
+    case 'error':
+      return `连接失败${detail ? `：${detail}` : ''}`
+    default:
+      return '未连接'
+  }
 }
 
 /**
- * 启动 MIDI 输入并持续把按住音高集合推给 onHeld；返回停止函数（移除监听、
- * 关闭状态订阅）。重复调用 start 时先停止上一次连接。
+ * 启动 MIDI 输入并持续把按住音高集合推给 onEvent；返回停止函数（移除监听、
+ * 关闭状态订阅）。
  */
 export function startMidiInput(onEvent: (ev: MidiAdapterEvent) => void): () => void {
   if (typeof navigator.requestMIDIAccess !== 'function') {
-    onEvent({ status: 'unsupported', held: [] })
+    onEvent({ status: 'unsupported', held: [], inputs: [] })
     return () => {}
   }
 
@@ -50,9 +69,16 @@ export function startMidiInput(onEvent: (ev: MidiAdapterEvent) => void): () => v
   const attached: MIDIInput[] = []
   const held = new Set<number>()
 
+  const inputNames = (): string[] => {
+    const names: string[] = []
+    // shim 的端口表不可迭代，用 forEach 收集（与调试工具一致）
+    access?.inputs.forEach((input) => names.push(input.name?.trim() || '未命名设备'))
+    return names
+  }
+
   const emit = (status: MidiAdapterStatus, detail?: string): void => {
     if (stopped) return
-    onEvent({ status, held: [...held].sort((a, b) => a - b), detail })
+    onEvent({ status, held: [...held].sort((a, b) => a - b), inputs: inputNames(), detail })
   }
 
   const onMessage = (e: MIDIMessageEvent): void => {
@@ -70,7 +96,6 @@ export function startMidiInput(onEvent: (ev: MidiAdapterEvent) => void): () => v
     for (const input of attached) input.removeEventListener('midimessage', onMessage)
     attached.length = 0
     if (access === null) return
-    // shim 的端口表不可迭代，用 forEach 收集（与调试工具一致）
     access.inputs.forEach((input) => {
       input.addEventListener('midimessage', onMessage)
       attached.push(input)
@@ -86,7 +111,12 @@ export function startMidiInput(onEvent: (ev: MidiAdapterEvent) => void): () => v
       clearTimeout(timeoutTimer)
       access = a
       attach()
-      a.addEventListener('statechange', attach)
+      // 设备插入/拔出：重挂监听并刷新设备列表展示
+      a.addEventListener('statechange', () => {
+        if (stopped) return
+        attach()
+        emit('connected')
+      })
       emit('connected')
     },
     (err: unknown) => {
