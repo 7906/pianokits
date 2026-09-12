@@ -16,6 +16,7 @@ import { ChordPracticeEngine } from '../../core/practice/chord-practice'
 import { midiNoteName } from '../../core/midi/note-name'
 import { el } from '../../ui/dom'
 import { buildChordKeyboard, type ChordKeyboard, type ExamKeyState } from './chord-keyboard'
+import { buildFigure, randomNeighborChord } from './harmony-graph'
 import { buildHarmonyWheel, type WheelChord } from './harmony-wheel'
 import { midiStatusText, startMidiInput } from './midi-input'
 
@@ -443,22 +444,51 @@ export function mountChordFingering(host: HTMLElement): () => void {
     renderExamBar()
   }
 
-  /** 魔方跟弹出题：图上四类质量（大/小/属七/减七）原位随机，含当前移调 */
+  /** 跟弹行进状态：走过的前一个节点（点亮走过的路）与上上题节点（防弹跳） */
+  let wheelPathFrom: WheelChord | null = null
+  let wheelPrevId: string | null = null
+
+  const randomWheelChord = (): WheelChord => ({
+    root: FIFTHS_ORDER[Math.floor(Math.random() * FIFTHS_ORDER.length)],
+    quality: WHEEL_QUALITIES[
+      Math.floor(Math.random() * WHEEL_QUALITIES.length)
+    ] as WheelChord['quality'],
+  })
+
+  /** 魔方跟弹出题：首题随机；之后沿当前图的走线行进——从上一题节点走到相邻和弦节点 */
   function askWheel(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
       nextTimer = undefined
     }
-    const root = ROOT_LABELS[Math.floor(Math.random() * ROOT_LABELS.length)]
-    const quality = WHEEL_QUALITIES[Math.floor(Math.random() * WHEEL_QUALITIES.length)]
-    const notes = getChordNotes(root, quality, 0)
+    const from =
+      wheelGuided && question !== null
+        ? { root: wheelRootName(question.root), quality: question.quality as WheelChord['quality'] }
+        : null
+    let chord: WheelChord
+    if (from !== null) {
+      const figure = buildFigure(state.wheelView)
+      const walked = randomNeighborChord(figure, from, wheelPrevId ?? undefined)
+      wheelPrevId = `${from.root}/${from.quality}`
+      chord = walked ?? randomWheelChord()
+    } else {
+      chord = randomWheelChord()
+      wheelPrevId = null
+    }
+    wheelPathFrom = from
+    const notes = getChordNotes(chord.root, chord.quality, 0)
     question = {
-      root,
-      quality,
+      root: chord.root,
+      quality: chord.quality,
       inversion: 0,
       hand: state.hand,
       pitches: notes.pitches.map((p) => p + state.transpose),
-      fingers: getChordFingering({ root, quality, inversion: 0, hand: state.hand }).fingers,
+      fingers: getChordFingering({
+        root: chord.root,
+        quality: chord.quality,
+        inversion: 0,
+        hand: state.hand,
+      }).fingers,
     }
     hintOn = false
     virtualHeld.clear()
@@ -482,6 +512,8 @@ export function mountChordFingering(host: HTMLElement): () => void {
       question = null
       engine.reset()
       virtualHeld.clear()
+      wheelPathFrom = null
+      wheelPrevId = null
     }
     renderAll()
   }
@@ -694,7 +726,9 @@ export function mountChordFingering(host: HTMLElement): () => void {
         INVERSION_NAMES[q.inversion],
         HAND_NAMES[q.hand],
         `指法 ${qFingering.fingers.join('-')}`,
-        '照着亮节点/亮键弹，弹对自动下一题',
+        wheelPathFrom !== null
+          ? `从 ${chordSymbol(wheelPathFrom.root, wheelPathFrom.quality)} 沿走线行进`
+          : '起走：弹对后沿走线继续',
       ]
         .filter(Boolean)
         .join(' · ')
@@ -707,8 +741,12 @@ export function mountChordFingering(host: HTMLElement): () => void {
       keyboard.paint(lit)
       keyboard.setBadges(new Map(q.pitches.map((p, i) => [p, qFingering.fingers[i]])))
       const target = { root: wheelRootName(q.root), quality: q.quality as WheelChord['quality'] }
-      wheelFunctional.setSelected(null)
-      wheelVoiceleading.setSelected(null)
+      // 走过的路保持可见：上一题节点琥珀 + 入射走线点亮，新目标琥珀脉冲
+      const pathFrom = wheelPathFrom
+        ? { root: wheelRootName(wheelPathFrom.root), quality: wheelPathFrom.quality }
+        : null
+      wheelFunctional.setSelected(pathFrom)
+      wheelVoiceleading.setSelected(pathFrom)
       wheelFunctional.setTarget(target)
       wheelVoiceleading.setTarget(target)
       wheelFunctional.setPlayed(playedList)

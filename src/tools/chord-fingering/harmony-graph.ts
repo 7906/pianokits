@@ -247,3 +247,48 @@ export function buildFigure(kind: FigureKind): HarmonyFigure {
 }
 
 export { SECTORS as FIGURE_SECTORS, VIEW as FIGURE_VIEW }
+
+/** 跟弹行进：走线语义权重——解决线最强，环线（五度圈）次之，其余按 1 计 */
+const WALK_WEIGHT: Readonly<Record<FigureEdgeKind, number>> = {
+  res: 4,
+  ring: 3,
+  rel: 2,
+  anchor: 1,
+  chain: 1,
+  dim: 1,
+}
+
+/**
+ * 跟弹的下一步：从 from 节点的**入射走线**里挑一个相邻和弦节点（加权随机），
+ * 永不返回 avoidId（上上题，防来回弹跳）；没有可用邻居（或全部被避让）返回 null。
+ * 走线图的锚点/链边没有和弦（pick 为空）不参与——行进只落在和弦节点上，
+ * 序列因此严格沿着图上画出的路径走。
+ */
+export function randomNeighborChord(
+  figure: HarmonyFigure,
+  from: { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' },
+  avoidId?: string,
+): { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' } | null {
+  const fromId = `${from.root}/${from.quality}`
+  const byId = new Map(figure.nodes.map((n) => [n.id, n]))
+  const candidates: {
+    chord: { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' }
+    w: number
+  }[] = []
+  for (const e of figure.edges) {
+    if (e.fromId !== fromId && e.toId !== fromId) continue
+    const otherId = e.fromId === fromId ? e.toId : e.fromId
+    if (otherId === avoidId) continue
+    const other = byId.get(otherId)
+    if (other === undefined || other.pick === undefined) continue
+    candidates.push({ chord: { ...other.pick }, w: WALK_WEIGHT[e.kind] })
+  }
+  if (candidates.length === 0) return null
+  const total = candidates.reduce((s, c) => s + c.w, 0)
+  let r = Math.random() * total
+  for (const c of candidates) {
+    r -= c.w
+    if (r <= 0) return c.chord
+  }
+  return candidates[candidates.length - 1].chord
+}
