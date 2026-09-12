@@ -2138,7 +2138,7 @@ input[type='range']::-moz-range-thumb {
   font-weight: 500;
 }
 
-/* 选中（琥珀光环）/ 弹奏识别（绿光环） */
+/* 选中（琥珀光环）/ 弹奏识别（绿光环）/ 跟弹目标（琥珀脉冲） */
 .hw__node.is-selected .hw__circle {
   stroke: var(--accent-hover);
   stroke-width: 4;
@@ -2149,6 +2149,27 @@ input[type='range']::-moz-range-thumb {
   stroke: var(--success);
   stroke-width: 4;
   filter: drop-shadow(0 0 7px rgba(127, 178, 133, 0.9));
+}
+
+.hw__node.is-target .hw__circle {
+  stroke: var(--accent);
+  stroke-width: 5;
+  animation: hw-pulse 1.2s var(--ease-out) infinite;
+}
+
+@keyframes hw-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 4px rgba(217, 164, 91, 0.55));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 12px rgba(228, 184, 113, 1));
+  }
+}
+
+.hw__node.is-target .hw__label {
+  fill: var(--accent-hover);
 }
 
 /* 走线：常驻暗色 */
@@ -2192,6 +2213,18 @@ input[type='range']::-moz-range-thumb {
 .hw__edge.is-played {
   stroke: rgba(127, 178, 133, 0.9);
   stroke-width: 2.5;
+}
+
+.hw__edge.is-target {
+  stroke: rgba(217, 164, 91, 0.85);
+  stroke-width: 2.5;
+}
+
+/* 魔方头部：子视图切换 + 跟弹开关 */
+.chordf__wheelhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* ---------- 降低动效偏好 ---------- */

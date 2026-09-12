@@ -35,10 +35,11 @@ const NODE_R: Readonly<Record<FigureNode['kind'], number>> = {
   bass: 22,
 }
 
-/** 走线状态类名 → 高亮箭头 marker */
+/** 高亮状态类 → 箭头 marker（无对应的保持默认暗色箭头） */
 const EDGE_ARROW_CLASS: Readonly<Record<string, string>> = {
-  'is-from-selected': 'url(#hw-arrow-sel)',
-  'is-from-played': 'url(#hw-arrow-played)',
+  'is-selected': 'url(#hw-arrow-sel)',
+  'is-played': 'url(#hw-arrow-played)',
+  'is-target': 'url(#hw-arrow-sel)',
 }
 
 function svgEl<K extends keyof SVGElementTagNameMap>(
@@ -106,6 +107,8 @@ export interface HarmonyWheel {
   setSelected(sel: WheelChord | null): void
   /** 弹奏识别命中的节点（减七等音多拼写会命中多个）；空数组清除 */
   setPlayed(sel: WheelChord[]): void
+  /** 跟弹练习的目标节点（琥珀脉冲）；null 清除 */
+  setTarget(sel: WheelChord | null): void
 }
 
 export function buildHarmonyWheel(
@@ -205,10 +208,10 @@ export function buildHarmonyWheel(
 
   const root = el('div', { class: 'hw' }, svg)
 
-  /** 命中节点 + 入射走线 一起点亮/熄灭 */
+  /** 命中节点 + 入射走线 一起点亮/熄灭；状态类 → 箭头 marker 表驱动 */
   const highlight = (
     chords: readonly WheelChord[] | null,
-    cls: 'is-selected' | 'is-played',
+    cls: 'is-selected' | 'is-played' | 'is-target',
   ): void => {
     const hitIds = new Set<string>()
     if (chords !== null) {
@@ -225,17 +228,11 @@ export function buildHarmonyWheel(
       if (edgeEl === undefined) continue
       const on = hitIds.has(e.fromId) || hitIds.has(e.toId)
       edgeEl.classList.toggle(`is-${cls.replace('is-', '')}`, on)
-      // 高亮箭头换色
-      if (on && cls === 'is-selected') {
-        if (edgeEl.getAttribute('marker-end') !== null)
-          edgeEl.setAttribute('marker-end', EDGE_ARROW_CLASS['is-from-selected'])
+      const marker = on ? EDGE_ARROW_CLASS[cls] : undefined
+      if (marker !== undefined) {
+        if (edgeEl.getAttribute('marker-end') !== null) edgeEl.setAttribute('marker-end', marker)
         if (edgeEl.getAttribute('marker-start') !== null)
-          edgeEl.setAttribute('marker-start', EDGE_ARROW_CLASS['is-from-selected'])
-      } else if (on && cls === 'is-played') {
-        if (edgeEl.getAttribute('marker-end') !== null)
-          edgeEl.setAttribute('marker-end', EDGE_ARROW_CLASS['is-from-played'])
-        if (edgeEl.getAttribute('marker-start') !== null)
-          edgeEl.setAttribute('marker-start', EDGE_ARROW_CLASS['is-from-played'])
+          edgeEl.setAttribute('marker-start', marker)
       } else {
         // 恢复默认暗色箭头
         if (e.arrows === 'end') edgeEl.setAttribute('marker-end', 'url(#hw-arrow)')
@@ -254,6 +251,10 @@ export function buildHarmonyWheel(
     },
     setPlayed(sel) {
       highlight(sel, 'is-played')
+    },
+    /** 跟弹练习的目标节点（琥珀脉冲；入射走线同亮） */
+    setTarget(sel) {
+      highlight(sel === null ? null : [sel], 'is-target')
     },
   }
 }

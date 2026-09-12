@@ -216,10 +216,21 @@ export function mountChordFingering(host: HTMLElement): () => void {
       renderAll()
     },
   )
+  let wheelGuided = false // 魔方跟弹：目标节点在图上脉冲高亮，弹对自动下一题
+  const guidedToggle = el(
+    'button',
+    {
+      class: 'chordf__chip',
+      title: '魔方跟弹：目标和弦节点高亮，在琴上弹对自动下一题',
+      onclick: () => toggleWheelGuided(),
+    },
+    '跟弹',
+  )
+  const wheelHeader = el('div', { class: 'chordf__wheelhead' }, viewSeg.el, guidedToggle)
   const wheelWrap = el(
     'div',
     { class: 'chordf__wheelwrap', hidden: true },
-    viewSeg.el,
+    wheelHeader,
     wheelFunctional.el,
     wheelVoiceleading.el,
   )
@@ -229,11 +240,10 @@ export function mountChordFingering(host: HTMLElement): () => void {
     const next = state.transpose + d
     if (next < MIN_TRANSPOSE || next > MAX_TRANSPOSE) return
     state.transpose = next
-    if (isPracticing() && question !== null) {
+    if ((isPracticing() || (state.mode === 'wheel' && wheelGuided)) && question !== null) {
       // 题目音高同步平移（指法不变）
       question = { ...question, pitches: question.pitches.map((p) => p + d) }
       engine.setQuestion(question.pitches)
-      renderPractice()
     }
     renderAll()
   }
@@ -295,8 +305,8 @@ export function mountChordFingering(host: HTMLElement): () => void {
     {
       class: 'chordf__exam-btn',
       onclick: () => {
-        if (isPracticing() && !engine.state.solved) streak = 0 // 未答完跳过：连对清零
-        ask()
+        if (hasQuiz() && !engine.state.solved) streak = 0 // 未答完跳过：连对清零
+        next()
       },
     },
     '下一题',
@@ -357,7 +367,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
   })
   const offSolved = engine.onSolved(() => {
     const q = question
-    if (!isPracticing() || q === null) return
+    if (!hasQuiz() || q === null) return
     streak += 1
     total += 1
     // 解答成立：目标键闪绿并亮出指法
@@ -366,12 +376,23 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.paint(lit)
     keyboard.setBadges(new Map(q.pitches.map((p, i) => [p, q.fingers[i]])))
     renderExamBar()
-    nextTimer = window.setTimeout(() => ask(), 900)
+    nextTimer = window.setTimeout(() => next(), 900)
   })
 
-  /** 是否处于出题练习（跟弹 / 考试）；浏览与魔方不判题 */
+  /** 是否处于键盘出题练习（跟弹 / 考试） */
   function isPracticing(): boolean {
     return state.mode === 'guided' || state.mode === 'exam'
+  }
+
+  /** 是否处于出题判定（跟弹 / 考试 / 魔方跟弹） */
+  function hasQuiz(): boolean {
+    return isPracticing() || (state.mode === 'wheel' && wheelGuided)
+  }
+
+  /** 下一题：键盘模式与魔方模式各自出题 */
+  function next(): void {
+    if (state.mode === 'wheel') askWheel()
+    else ask()
   }
 
   function syncHeld(): void {
@@ -394,7 +415,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     renderAll()
   }
 
-  /** 进入魔方模式：无题目，键盘照常显示当前选中和弦，弹奏实时定位到轮上 */
+  /** 进入魔方模式：跟弹开着就接着出题，否则纯浏览 */
   function enterWheel(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
@@ -404,7 +425,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     question = null
     hintOn = false
     engine.reset()
-    examBar.hidden = true
+    if (wheelGuided) askWheel()
     renderAll()
   }
 
@@ -420,6 +441,49 @@ export function mountChordFingering(host: HTMLElement): () => void {
     engine.setQuestion(question.pitches)
     renderPractice()
     renderExamBar()
+  }
+
+  /** 魔方跟弹出题：图上四类质量（大/小/属七/减七）原位随机，含当前移调 */
+  function askWheel(): void {
+    if (nextTimer !== undefined) {
+      clearTimeout(nextTimer)
+      nextTimer = undefined
+    }
+    const root = ROOT_LABELS[Math.floor(Math.random() * ROOT_LABELS.length)]
+    const quality = WHEEL_QUALITIES[Math.floor(Math.random() * WHEEL_QUALITIES.length)]
+    const notes = getChordNotes(root, quality, 0)
+    question = {
+      root,
+      quality,
+      inversion: 0,
+      hand: state.hand,
+      pitches: notes.pitches.map((p) => p + state.transpose),
+      fingers: getChordFingering({ root, quality, inversion: 0, hand: state.hand }).fingers,
+    }
+    hintOn = false
+    virtualHeld.clear()
+    engine.setQuestion(question.pitches)
+    renderWheel()
+    renderExamBar()
+  }
+
+  /** 魔方跟弹开关：开启即出题，关闭复位判定与计数 */
+  function toggleWheelGuided(): void {
+    wheelGuided = !wheelGuided
+    streak = 0
+    total = 0
+    if (wheelGuided) {
+      askWheel()
+    } else {
+      if (nextTimer !== undefined) {
+        clearTimeout(nextTimer)
+        nextTimer = undefined
+      }
+      question = null
+      engine.reset()
+      virtualHeld.clear()
+    }
+    renderAll()
   }
 
   function exitPractice(): void {
@@ -597,8 +661,62 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.setBadges(showTarget ? new Map(q.pitches.map((p, i) => [p, q.fingers[i]])) : new Map())
   }
 
-  /** 魔方模式：键盘照常显示选中和弦与弹奏回显；图上高亮选中和弹奏识别的节点 */
+  /** 魔方模式：键盘照常显示选中和弦与弹奏回显；图上高亮选中和弹奏识别的节点；
+   *  跟弹开启时改为目标驱动——目标节点脉冲 + 键盘目标键位/指法，弹对自动下一题 */
   function renderWheel(): void {
+    const held = new Set([...virtualHeld, ...midiHeld])
+    const detected = detectChord(held)
+    // 减七等音多解：一个减七音集点亮全部 4 个 ° 节点（转调枢纽的教学点）
+    const played: WheelChord[] =
+      detected === null
+        ? []
+        : detected.quality === 'diminished7'
+          ? detectDim7Roots(held).map((r) => ({ root: r, quality: 'diminished7' as const }))
+          : [{ root: detected.root, quality: detected.quality }]
+    const playedList = played.map((c) => ({ ...c, root: wheelRootName(c.root) }))
+    const wheelViewName = state.wheelView === 'functional' ? '转调图' : '走线图'
+    const st = engine.state
+
+    if (wheelGuided && question !== null && state.mode === 'wheel') {
+      // —— 跟弹：目标节点脉冲 + 键盘目标键位/指法 ——
+      const q = question
+      if (st.solved) return // onSolved 已画绿色与指法，等待自动下一题
+      const qFingering = getChordFingering({
+        root: q.root,
+        quality: q.quality,
+        inversion: q.inversion,
+        hand: state.hand,
+        profile: state.profileId,
+      })
+      headlineMain.textContent = `请弹奏：${chordSymbol(q.root, q.quality)}`
+      headlineSub.textContent = [
+        wheelViewName,
+        INVERSION_NAMES[q.inversion],
+        HAND_NAMES[q.hand],
+        `指法 ${qFingering.fingers.join('-')}`,
+        '照着亮节点/亮键弹，弹对自动下一题',
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+      for (const p of q.pitches) {
+        if (!st.held.has(p)) lit.set(p, { state: 'held', alpha: 0.35, glow: 0 })
+      }
+      for (const p of st.held) lit.set(p, { state: 'held', alpha: 1, glow: 0.3 })
+      for (const p of st.wrong) lit.set(p, { state: 'wrong', alpha: 1, glow: 0.6 })
+      keyboard.paint(lit)
+      keyboard.setBadges(new Map(q.pitches.map((p, i) => [p, qFingering.fingers[i]])))
+      const target = { root: wheelRootName(q.root), quality: q.quality as WheelChord['quality'] }
+      wheelFunctional.setSelected(null)
+      wheelVoiceleading.setSelected(null)
+      wheelFunctional.setTarget(target)
+      wheelVoiceleading.setTarget(target)
+      wheelFunctional.setPlayed(playedList)
+      wheelVoiceleading.setPlayed(playedList)
+      return
+    }
+
+    // —— 浏览式魔方：选中和弦 + 弹奏实时定位 ——
     const notes = getChordNotes(state.root, state.quality, state.inversion)
     const pitches = notes.pitches.map((p) => p + state.transpose)
     const fingering = getChordFingering({
@@ -609,18 +727,9 @@ export function mountChordFingering(host: HTMLElement): () => void {
       profile: state.profileId,
     })
 
-    const held = new Set([...virtualHeld, ...midiHeld])
-    const detected = detectChord(held)
-    // 减七等音多解：一个减七音集点亮全部 4 个 ° 节点（转调枢纽的教学点）
-    const played: WheelChord[] =
-      detected === null
-        ? []
-        : detected.quality === 'diminished7'
-          ? detectDim7Roots(held).map((r) => ({ root: r, quality: 'diminished7' as const }))
-          : [{ root: detected.root, quality: detected.quality }]
     headlineMain.textContent = chordSymbol(state.root, state.quality)
     headlineSub.textContent = [
-      state.wheelView === 'functional' ? '转调图' : '走线图',
+      wheelViewName,
       INVERSION_NAMES[state.inversion],
       HAND_NAMES[state.hand],
       `指法 ${fingering.fingers.join('-')}`,
@@ -650,11 +759,12 @@ export function mountChordFingering(host: HTMLElement): () => void {
     const wheelSel = WHEEL_QUALITIES.includes(state.quality)
       ? { root: wheelRootName(state.root), quality: state.quality as WheelChord['quality'] }
       : null
-    const playedList = played.map((c) => ({ ...c, root: wheelRootName(c.root) }))
     wheelFunctional.setSelected(wheelSel)
     wheelFunctional.setPlayed(playedList)
     wheelVoiceleading.setSelected(wheelSel)
     wheelVoiceleading.setPlayed(playedList)
+    wheelFunctional.setTarget(null)
+    wheelVoiceleading.setTarget(null)
   }
 
   function renderAll(): void {
@@ -663,6 +773,10 @@ export function mountChordFingering(host: HTMLElement): () => void {
     wheelFunctional.el.hidden = state.wheelView !== 'functional'
     wheelVoiceleading.el.hidden = state.wheelView !== 'voiceleading'
     viewSeg.set(state.wheelView)
+    guidedToggle.classList.toggle('is-active', wheelGuided)
+    examBar.hidden = state.mode === 'browse' || (state.mode === 'wheel' && !wheelGuided)
+    exitBtn.hidden = state.mode === 'wheel'
+    hintBtn.hidden = state.mode !== 'exam'
     if (state.mode === 'browse') renderBrowse()
     else if (state.mode === 'wheel') renderWheel()
     else renderPractice()
