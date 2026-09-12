@@ -1,58 +1,44 @@
 import { el } from '../../ui/dom'
+import {
+  buildFigure,
+  FIGURE_VIEW,
+  type FigureEdge,
+  type FigureKind,
+  type FigureNode,
+  type HarmonyFigure,
+} from './harmony-graph'
 
 /**
- * 和弦魔方（和声轮）：源自《Illustrated Harmony》的图形走线思路——
- * 12 个扇区按五度圈排列（C 在顶部、顺时针纯五度），每扇区三层节点：
- * 外层大三（红）、中层属七（琥珀）、内层小三（蓝）。
- *
- * 常驻走线（暗色）：属七 → 上方一扇区的大三（V7→I 解决）、大三 ↔ 同扇区小三
- * （关系大小调）。选中 / 弹奏的节点高亮，经过它的走线同步点亮。
- * 点击节点切换和弦；弹琴时由 detectChord 实时定位所弹和弦的节点。
- * 纯展示组件：不依赖 core（扇区序由调用方传入），所有状态由外部 set 驱动。
+ * 魔方图渲染器：把 harmony-graph 构建的两张图（转调图 / 走线图）渲染为 SVG。
+ * 通用规则——
+ * - 节点按 kind 配色（大三红 / 属七琥珀 / 小三蓝 / 减七紫 / 低音锚点灰）；
+ * - 走线按 kind 定样式（解决箭头 / 关系虚线 / 减七蛛网细线 / 低音链双向箭头）；
+ * - 和弦节点可点选（bass 锚点只展示）；选中 = 琥珀光环、弹奏识别 = 绿光环；
+ * - 高亮规则：命中节点的**所有入射走线**同步点亮——属七点亮自己的解决线、
+ *   大三点亮指向它的解决线与关系线、减七点亮全部 8 条等音转调线。
+ * 所有状态由外部 set 驱动，组件无内部状态。
  */
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
-/** 魔方图上的和弦（与 detectChord 的三类一致） */
+/** 魔方图上的和弦（与 detectChord 的四类一致） */
 export interface WheelChord {
   root: string
-  quality: 'major' | 'minor' | 'dominant7'
+  quality: 'major' | 'minor' | 'dominant7' | 'diminished7'
 }
 
-/** 扇区顺序（canonical 拼写）与显示拼写（降号侧用 ♭，与原书一致） */
-const SECTORS: readonly { root: string; label: string }[] = [
-  { root: 'C', label: 'C' },
-  { root: 'G', label: 'G' },
-  { root: 'D', label: 'D' },
-  { root: 'A', label: 'A' },
-  { root: 'E', label: 'E' },
-  { root: 'B', label: 'B' },
-  { root: 'F#', label: 'F♯' },
-  { root: 'Db', label: 'D♭' },
-  { root: 'Ab', label: 'A♭' },
-  { root: 'Eb', label: 'E♭' },
-  { root: 'Bb', label: 'B♭' },
-  { root: 'F', label: 'F' },
-]
-
-const VIEW = 660
-const CX = VIEW / 2
-const CY = VIEW / 2
-/** 三层节点半径（外→内：大三 / 属七 / 小三） */
-const RADIUS: Readonly<Record<WheelChord['quality'], number>> = {
-  major: 258,
-  dominant7: 200,
-  minor: 142,
-}
-const NODE_R: Readonly<Record<WheelChord['quality'], number>> = {
+const NODE_R: Readonly<Record<FigureNode['kind'], number>> = {
   major: 28,
   dominant7: 27,
   minor: 26,
+  diminished7: 25,
+  bass: 22,
 }
-const QUALITY_SUFFIX: Readonly<Record<WheelChord['quality'], string>> = {
-  major: '',
-  dominant7: '7',
-  minor: 'm',
+
+/** 走线状态类名 → 高亮箭头 marker */
+const EDGE_ARROW_CLASS: Readonly<Record<string, string>> = {
+  'is-from-selected': 'url(#hw-arrow-sel)',
+  'is-from-played': 'url(#hw-arrow-played)',
 }
 
 function svgEl<K extends keyof SVGElementTagNameMap>(
@@ -64,26 +50,6 @@ function svgEl<K extends keyof SVGElementTagNameMap>(
   for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value)
   for (const child of children) node.append(child)
   return node
-}
-
-/** 扇区角（度）：C 在顶部，顺时针纯五度 */
-function sectorAngle(index: number): number {
-  return -90 + index * 30
-}
-
-function polar(radius: number, angleDeg: number): { x: number; y: number } {
-  const rad = (angleDeg * Math.PI) / 180
-  return { x: CX + radius * Math.cos(rad), y: CY + radius * Math.sin(rad) }
-}
-
-/** 两节点间的解决走线：微弯曲线（控制点向外推），终点在目标节点边缘 */
-function resolutionPath(from: { x: number; y: number }, to: { x: number; y: number }): string {
-  const mx = (from.x + to.x) / 2
-  const my = (from.y + to.y) / 2
-  const dx = mx - CX
-  const dy = my - CY
-  const push = 1.1
-  return `M ${from.x} ${from.y} Q ${CX + dx * push} ${CY + dy * push} ${to.x} ${to.y}`
 }
 
 /** 箭头 marker（开式折线箭头，颜色随走线状态区分） */
@@ -110,118 +76,122 @@ function arrowMarker(id: string, color: string): SVGMarkerElement {
   return m
 }
 
+/** 走线两端在节点圆边缘收口（避免穿过圆内） */
+function trim(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  gap: number,
+): {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+} {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  return {
+    x1: from.x + ux * gap,
+    y1: from.y + uy * gap,
+    x2: to.x - ux * gap,
+    y2: to.y - uy * gap,
+  }
+}
+
 export interface HarmonyWheel {
   el: HTMLElement
   /** 选中节点（浏览/点选的和弦）；null 清除 */
   setSelected(sel: WheelChord | null): void
-  /** 弹奏识别命中的节点；null 清除 */
-  setPlayed(sel: WheelChord | null): void
+  /** 弹奏识别命中的节点（减七等音多拼写会命中多个）；空数组清除 */
+  setPlayed(sel: WheelChord[]): void
 }
 
-export function buildHarmonyWheel(onPick: (sel: WheelChord) => void): HarmonyWheel {
+export function buildHarmonyWheel(
+  kind: FigureKind,
+  onPick: (sel: WheelChord) => void,
+): HarmonyWheel {
+  const figure: HarmonyFigure = buildFigure(kind)
+
   const nodeByKey = new Map<string, SVGGElement>()
-  /** 解决走线：键 `${root}/7` → 目标扇区序（起点 = 该属七节点） */
-  const resLinks = new Map<string, SVGPathElement>()
-  /** 关系大小调走线：键 `${root}/rel` */
-  const relLinks = new Map<string, SVGLineElement>()
+  /** pick 和弦 → 节点 id（弹奏识别按此匹配） */
+  const nodeByChord = new Map<string, string>()
+  const edgesByNode = new Map<string, FigureEdge[]>()
 
   const linksG = svgEl('g', { class: 'hw__links' })
   const nodesG = svgEl('g', { class: 'hw__nodes' })
 
-  // —— 节点（先建，坐标供走线引用） ——
-  const posByKey = new Map<string, { x: number; y: number }>()
-  for (let i = 0; i < SECTORS.length; i++) {
-    const angle = sectorAngle(i)
-    for (const quality of ['major', 'dominant7', 'minor'] as const) {
-      const p = polar(RADIUS[quality], angle)
-      posByKey.set(`${SECTORS[i].root}/${quality}`, p)
+  // —— 走线（先画，节点覆盖其上） ——
+  for (const e of figure.edges) {
+    const gap = NODE_R.major + 2
+    const t = trim({ x: e.fromX, y: e.fromY }, { x: e.toX, y: e.toY }, gap)
+    const attrs: Record<string, string> = {
+      class: `hw__edge hw__edge--${e.kind}`,
+      x1: String(t.x1),
+      y1: String(t.y1),
+      x2: String(t.x2),
+      y2: String(t.y2),
     }
+    if (e.arrows === 'end') attrs['marker-end'] = 'url(#hw-arrow)'
+    if (e.arrows === 'both') {
+      attrs['marker-start'] = 'url(#hw-arrow)'
+      attrs['marker-end'] = 'url(#hw-arrow)'
+    }
+    const elEdge = svgEl('line', attrs)
+    linksG.append(elEdge)
+    const list = edgesByNode.get(e.fromId) ?? []
+    list.push(e)
+    edgesByNode.set(e.fromId, list)
+    const listTo = edgesByNode.get(e.toId) ?? []
+    listTo.push(e)
+    edgesByNode.set(e.toId, listTo)
+    ;(e as unknown as { el?: SVGLineElement }).el = elEdge
   }
 
-  // —— 常驻走线（暗色；高亮由 class 驱动） ——
-  for (let i = 0; i < SECTORS.length; i++) {
-    // 属七解决：X7 → 五度圈上一扇区的大三（如 G7 → C）
-    const from = posByKey.get(`${SECTORS[i].root}/dominant7`)
-    const targetIndex = (i + SECTORS.length - 1) % SECTORS.length
-    const to = posByKey.get(`${SECTORS[targetIndex].root}/major`)
-    if (from !== undefined && to !== undefined) {
-      const path = svgEl('path', {
-        class: 'hw__link hw__link--res',
-        d: resolutionPath(from, to),
-        'marker-end': 'url(#hw-arrow)',
-      })
-      linksG.append(path)
-      resLinks.set(`${SECTORS[i].root}/7`, path)
+  // —— 节点 ——
+  for (const n of figure.nodes) {
+    const r = NODE_R[n.kind]
+    const g = svgEl('g', {
+      class: `hw__node hw__node--${n.kind}`,
+      'data-id': n.id,
+      ...(n.pick ? { 'data-root': n.pick.root, 'data-quality': n.pick.quality } : {}),
+    })
+    if (n.pick) {
+      g.setAttribute('role', 'button')
+      g.classList.add('hw__node--pick')
     }
-    // 关系大小调：大三(i) ↔ 小三(i+3)（根音上移小三度，如 C ↔ Am；跨扇区长线，即原书的走线）
-    const relA = posByKey.get(`${SECTORS[i].root}/major`)
-    const relB = posByKey.get(`${SECTORS[(i + 3) % SECTORS.length].root}/minor`)
-    if (relA !== undefined && relB !== undefined) {
-      const line = svgEl('line', {
-        class: 'hw__link hw__link--rel',
-        x1: String(relA.x),
-        y1: String(relA.y),
-        x2: String(relB.x),
-        y2: String(relB.y),
-      })
-      linksG.append(line)
-      relLinks.set(`${SECTORS[i].root}/rel`, line)
-    }
-  }
-
-  // —— 节点绘制 ——
-  for (let i = 0; i < SECTORS.length; i++) {
-    const { root, label } = SECTORS[i]
-    const angle = sectorAngle(i)
-    for (const quality of ['major', 'dominant7', 'minor'] as const) {
-      const p = polar(RADIUS[quality], angle)
-      const key = `${root}/${quality}`
-      const g = svgEl('g', {
-        class: `hw__node hw__node--${quality}`,
-        'data-root': root,
-        'data-quality': quality,
-        role: 'button',
-      })
-      // 命中区比可见圆大一圈，触摸好点
-      g.append(
-        svgEl('circle', {
-          class: 'hw__hit',
-          cx: String(p.x),
-          cy: String(p.y),
-          r: String(NODE_R[quality] + 9),
-        }),
-      )
-      g.append(
-        svgEl('circle', {
-          class: 'hw__circle',
-          cx: String(p.x),
-          cy: String(p.y),
-          r: String(NODE_R[quality]),
-        }),
-      )
-      g.append(
-        svgEl(
-          'text',
-          {
-            class: 'hw__label',
-            x: String(p.x),
-            y: String(p.y),
-            'text-anchor': 'middle',
-            'dominant-baseline': 'central',
-          },
-          `${label}${QUALITY_SUFFIX[quality]}`,
-        ),
-      )
+    g.append(
+      svgEl('circle', { class: 'hw__hit', cx: String(n.x), cy: String(n.y), r: String(r + 8) }),
+    )
+    g.append(
+      svgEl('circle', { class: 'hw__circle', cx: String(n.x), cy: String(n.y), r: String(r) }),
+    )
+    g.append(
+      svgEl(
+        'text',
+        {
+          class: 'hw__label',
+          x: String(n.x),
+          y: String(n.y),
+          'text-anchor': 'middle',
+          'dominant-baseline': 'central',
+        },
+        n.label,
+      ),
+    )
+    if (n.pick) {
       g.addEventListener('pointerdown', (e) => e.preventDefault())
-      g.addEventListener('click', () => onPick({ root, quality }))
-      nodesG.append(g)
-      nodeByKey.set(key, g)
+      g.addEventListener('click', () => onPick(n.pick!))
+      nodeByChord.set(`${n.pick.root}/${n.pick.quality}`, n.id)
     }
+    nodesG.append(g)
+    nodeByKey.set(n.id, g)
   }
 
   const svg = svgEl(
     'svg',
-    { class: 'hw__svg', viewBox: `0 0 ${VIEW} ${VIEW}`, 'aria-hidden': 'false' },
+    { class: 'hw__svg', viewBox: `0 0 ${FIGURE_VIEW} ${FIGURE_VIEW}` },
     svgEl(
       'defs',
       {},
@@ -233,55 +203,57 @@ export function buildHarmonyWheel(onPick: (sel: WheelChord) => void): HarmonyWhe
     nodesG,
   )
 
-  const root = el(
-    'div',
-    { class: 'hw' },
-    el(
-      'div',
-      { class: 'hw__legend' },
-      el('span', { class: 'hw__legend-item hw__legend-item--major' }, '大三'),
-      el('span', { class: 'hw__legend-item hw__legend-item--dominant7' }, '属七'),
-      el('span', { class: 'hw__legend-item hw__legend-item--minor' }, '小三'),
-      el('span', { class: 'hw__legend-hint' }, '点节点切换和弦 · 弹琴实时定位'),
-    ),
-    svg,
-  )
+  const root = el('div', { class: 'hw' }, svg)
 
-  const highlight = (sel: WheelChord | null, cls: 'is-selected' | 'is-played'): void => {
-    for (const g of nodeByKey.values()) g.classList.remove(cls)
-    if (sel === null) return
-    nodeByKey.get(`${sel.root}/${sel.quality}`)?.classList.add(cls)
-  }
-
-  /** 点亮经过 sel 的走线：属七看它出发的解决线；大三/小三看关系线；大三再看指向它的解决线 */
-  const indexOfRoot = new Map(SECTORS.map((s, i) => [s.root, i]))
-  const highlightLinks = (sel: WheelChord | null, cls: string): void => {
-    for (const link of [...resLinks.values(), ...relLinks.values()]) link.classList.remove(cls)
-    if (sel === null) return
-    if (sel.quality === 'dominant7') {
-      resLinks.get(`${sel.root}/7`)?.classList.add(cls)
-      return
+  /** 命中节点 + 入射走线 一起点亮/熄灭 */
+  const highlight = (
+    chords: readonly WheelChord[] | null,
+    cls: 'is-selected' | 'is-played',
+  ): void => {
+    const hitIds = new Set<string>()
+    if (chords !== null) {
+      for (const c of chords) {
+        const id = nodeByChord.get(`${c.root}/${c.quality}`)
+        if (id !== undefined) hitIds.add(id)
+      }
     }
-    const i = indexOfRoot.get(sel.root) ?? 0
-    // 关系线以大三所在扇区为键：小三的关系线挂在 (i−3) 扇区
-    const relRoot =
-      sel.quality === 'major' ? sel.root : SECTORS[(i + SECTORS.length - 3) % SECTORS.length].root
-    relLinks.get(`${relRoot}/rel`)?.classList.add(cls)
-    if (sel.quality === 'major') {
-      const domRoot = SECTORS[(i + 1) % SECTORS.length].root
-      resLinks.get(`${domRoot}/7`)?.classList.add(cls)
+    for (const [id, g] of nodeByKey) {
+      g.classList.toggle(cls, hitIds.has(id))
+    }
+    for (const e of figure.edges) {
+      const edgeEl = (e as unknown as { el?: SVGLineElement }).el
+      if (edgeEl === undefined) continue
+      const on = hitIds.has(e.fromId) || hitIds.has(e.toId)
+      edgeEl.classList.toggle(`is-${cls.replace('is-', '')}`, on)
+      // 高亮箭头换色
+      if (on && cls === 'is-selected') {
+        if (edgeEl.getAttribute('marker-end') !== null)
+          edgeEl.setAttribute('marker-end', EDGE_ARROW_CLASS['is-from-selected'])
+        if (edgeEl.getAttribute('marker-start') !== null)
+          edgeEl.setAttribute('marker-start', EDGE_ARROW_CLASS['is-from-selected'])
+      } else if (on && cls === 'is-played') {
+        if (edgeEl.getAttribute('marker-end') !== null)
+          edgeEl.setAttribute('marker-end', EDGE_ARROW_CLASS['is-from-played'])
+        if (edgeEl.getAttribute('marker-start') !== null)
+          edgeEl.setAttribute('marker-start', EDGE_ARROW_CLASS['is-from-played'])
+      } else {
+        // 恢复默认暗色箭头
+        if (e.arrows === 'end') edgeEl.setAttribute('marker-end', 'url(#hw-arrow)')
+        if (e.arrows === 'both') {
+          edgeEl.setAttribute('marker-end', 'url(#hw-arrow)')
+          edgeEl.setAttribute('marker-start', 'url(#hw-arrow)')
+        }
+      }
     }
   }
 
   return {
     el: root,
     setSelected(sel) {
-      highlight(sel, 'is-selected')
-      highlightLinks(sel, 'hw__link--from-selected')
+      highlight(sel === null ? null : [sel], 'is-selected')
     },
     setPlayed(sel) {
       highlight(sel, 'is-played')
-      highlightLinks(sel, 'hw__link--from-played')
     },
   }
 }

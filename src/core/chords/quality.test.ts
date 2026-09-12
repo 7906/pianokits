@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { CHORD_QUALITIES, allInversions, getChordQuality } from './quality'
 
 describe('CHORD_QUALITIES', () => {
-  it('第一版覆盖规格要求的 10 种和弦质量', () => {
+  it('覆盖规格的 10 种和弦质量 + 减七（魔方图转调层）', () => {
     expect(CHORD_QUALITIES.map((q) => q.id)).toEqual([
       'major',
       'minor',
@@ -15,6 +15,7 @@ describe('CHORD_QUALITIES', () => {
       'major7',
       'minor7',
       'halfDiminished7',
+      'diminished7',
     ])
   })
 
@@ -59,6 +60,7 @@ describe('CHORD_QUALITIES', () => {
     expect(getChordQuality('major7').intervals).toEqual([0, 4, 7, 11])
     expect(getChordQuality('minor7').intervals).toEqual([0, 3, 7, 10])
     expect(getChordQuality('halfDiminished7').intervals).toEqual([0, 3, 6, 10])
+    expect(getChordQuality('diminished7').intervals).toEqual([0, 3, 6, 9])
   })
 
   it('getChordQuality：未知 id 抛 RangeError', () => {

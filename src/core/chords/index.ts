@@ -20,6 +20,7 @@ export {
   DETECT_QUALITIES,
   FIFTHS_ORDER,
   detectChord,
+  detectDim7Roots,
   type DetectedChord,
   type DetectedQuality,
 } from './chord-detect'

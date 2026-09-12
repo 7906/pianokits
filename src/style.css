@@ -1987,9 +1987,9 @@ input[type='range']::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- 和弦魔方（和声轮） ----------
-   五度圈 12 扇区 × 大三(外)/属七(中)/小三(内) 三层节点；
-   走线常驻暗色，选中（琥珀）/弹奏识别（绿）时点亮 */
+/* ---------- 和弦魔方（和声轮）：转调图 / 走线图 ----------
+   配色对齐原书：大三红 / 属七琥珀 / 小三蓝 / 减七紫 / 低音锚点灰；
+   走线常驻暗色，选中（琥珀）/弹奏识别（绿）时点亮入射走线 */
 .hw {
   display: flex;
   flex-direction: column;
@@ -2002,14 +2002,32 @@ input[type='range']::-moz-range-thumb {
 }
 
 .hw__svg {
-  width: min(92vw, 560px);
+  width: min(92vw, 620px);
   height: auto;
   touch-action: manipulation;
 }
 
+.chordf__wheelwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.chordf__wheelwrap[hidden] {
+  display: none;
+}
+
+.chordf__wheelwrap .chordf__seg {
+  margin-bottom: 2px;
+}
+
+/* 图例 */
 .hw__legend {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 14px;
   font-size: 0.8125rem;
   color: var(--text-1);
@@ -2026,24 +2044,36 @@ input[type='range']::-moz-range-thumb {
 }
 
 .hw__legend-item--major::before {
-  background: var(--hw-major, #e0695e);
+  background: #e0695e;
 }
 
 .hw__legend-item--dominant7::before {
-  background: var(--hw-dom7, #d9a45b);
+  background: #d9a45b;
 }
 
 .hw__legend-item--minor::before {
-  background: var(--hw-minor, #64a8dc);
+  background: #64a8dc;
+}
+
+.hw__legend-item--diminished7::before {
+  background: #a98fe3;
+}
+
+.hw__legend-item--bass::before {
+  background: #8b8880;
 }
 
 .hw__legend-hint {
   color: var(--text-2);
 }
 
-/* 节点：分类配色描边 + 深底 */
+/* 节点配色 */
 .hw__node {
   cursor: pointer;
+}
+
+.hw__node--bass {
+  cursor: default;
 }
 
 .hw__hit {
@@ -2068,6 +2098,18 @@ input[type='range']::-moz-range-thumb {
   stroke-width: 2;
 }
 
+.hw__node--diminished7 .hw__circle {
+  fill: #1c1826;
+  stroke: #a98fe3;
+  stroke-width: 2;
+}
+
+.hw__node--bass .hw__circle {
+  fill: #201f1c;
+  stroke: #8b8880;
+  stroke-width: 1.5;
+}
+
 .hw__label {
   font-size: 17px;
   font-weight: 600;
@@ -2086,6 +2128,16 @@ input[type='range']::-moz-range-thumb {
   fill: #9cc6ec;
 }
 
+.hw__node--diminished7 .hw__label {
+  fill: #c9b6f2;
+}
+
+.hw__node--bass .hw__label {
+  fill: #a5a29a;
+  font-size: 14px;
+  font-weight: 500;
+}
+
 /* 选中（琥珀光环）/ 弹奏识别（绿光环） */
 .hw__node.is-selected .hw__circle {
   stroke: var(--accent-hover);
@@ -2099,33 +2151,47 @@ input[type='range']::-moz-range-thumb {
   filter: drop-shadow(0 0 7px rgba(127, 178, 133, 0.9));
 }
 
-/* 走线：常驻暗色；随选中（琥珀）/弹奏（绿）点亮 */
-.hw__link {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.14);
+/* 走线：常驻暗色 */
+.hw__edge {
+  stroke: rgba(255, 255, 255, 0.13);
   stroke-width: 1.5;
 }
 
-.hw__link--rel {
+.hw__edge--ring {
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.hw__edge--res {
+  stroke: rgba(255, 255, 255, 0.2);
+}
+
+.hw__edge--rel {
   stroke-dasharray: 4 5;
 }
 
-.hw__link--from-selected {
+.hw__edge--dim {
+  stroke: rgba(169, 143, 227, 0.16);
+  stroke-width: 1;
+}
+
+.hw__edge--anchor {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.hw__edge--chain {
+  stroke: rgba(139, 136, 128, 0.28);
+  stroke-dasharray: 2 4;
+}
+
+/* 选中（琥珀）/ 弹奏（绿）点亮入射走线 */
+.hw__edge.is-selected {
   stroke: rgba(217, 164, 91, 0.9);
   stroke-width: 2.5;
 }
 
-.hw__link--from-selected[marker-end] {
-  marker-end: url(#hw-arrow-sel);
-}
-
-.hw__link--from-played {
+.hw__edge.is-played {
   stroke: rgba(127, 178, 133, 0.9);
   stroke-width: 2.5;
-}
-
-.hw__link--from-played[marker-end] {
-  marker-end: url(#hw-arrow-played);
 }
 
 /* ---------- 降低动效偏好 ---------- */

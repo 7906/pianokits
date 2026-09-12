@@ -17,6 +17,7 @@ export type ChordQualityId =
   | 'major7'
   | 'minor7'
   | 'halfDiminished7'
+  | 'diminished7'
 
 /** 和弦类别：决定使用三和弦还是七和弦指法规则表 */
 export type ChordCategory = 'triad' | 'seventh'
@@ -91,6 +92,7 @@ export const CHORD_QUALITIES: readonly ChordQuality[] = [
     [0, 3, 6, 10],
     ['1', 'b3', 'b5', 'b7'],
   ),
+  seventh('diminished7', ['°7', 'dim7', 'o7'], [0, 3, 6, 9], ['1', 'b3', 'b5', 'bb7']),
 ]
 
 const BY_ID = new Map<string, ChordQuality>(CHORD_QUALITIES.map((q) => [q.id, q]))

@@ -41,7 +41,7 @@ describe('parseChordSymbol', () => {
   })
 
   it('非法和弦字符串抛 ChordParseError', () => {
-    for (const bad of ['', '   ', 'H', '7', 'Cx', 'Cmm', 'Cxyz', 'Csus9', 'Cmaj9', 'Cdim7']) {
+    for (const bad of ['', '   ', 'H', '7', 'Cx', 'Cmm', 'Cxyz', 'Csus9', 'Cmaj9', 'Cdim9']) {
       expect(() => parseChordSymbol(bad), bad).toThrow(ChordParseError)
     }
   })

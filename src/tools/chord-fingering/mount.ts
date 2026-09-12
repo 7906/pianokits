@@ -2,6 +2,7 @@ import {
   CHORD_QUALITIES,
   FIFTHS_ORDER,
   detectChord,
+  detectDim7Roots,
   getChordNotes,
   getChordQuality,
   parseChordSymbol,
@@ -46,6 +47,7 @@ const QUALITY_LABELS: Readonly<Record<ChordQualityId, string>> = {
   major7: '大七',
   minor7: '小七',
   halfDiminished7: '半减七',
+  diminished7: '减七',
 }
 const INVERSION_NAMES = ['原位', '第一转位', '第二转位', '第三转位'] as const
 const HAND_NAMES: Readonly<Record<Hand, string>> = { right: '右手', left: '左手' }
@@ -53,9 +55,11 @@ const MIN_TRANSPOSE = -11
 const MAX_TRANSPOSE = 11
 
 type ToolMode = 'browse' | 'wheel' | 'guided' | 'exam'
+/** 魔方子视图：转调图（原书图 2）/ 走线图（原书图 1） */
+type WheelView = 'functional' | 'voiceleading'
 
 /** 魔方图支持的质量（与 detectChord / 和声轮节点一致） */
-const WHEEL_QUALITIES: readonly ChordQualityId[] = ['major', 'minor', 'dominant7']
+const WHEEL_QUALITIES: readonly ChordQualityId[] = ['major', 'minor', 'dominant7', 'diminished7']
 
 /** 根音拼写折到五度圈扇区拼写（C#→Db、D#→Eb…），与魔方图节点一致 */
 function wheelRootName(root: NoteName): NoteName {
@@ -71,6 +75,7 @@ interface ToolState {
   profileId: 'standard' | 'small-hand'
   transpose: number
   mode: ToolMode
+  wheelView: WheelView
 }
 
 interface ExamRun {
@@ -109,6 +114,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     profileId: 'standard',
     transpose: 0,
     mode: 'browse',
+    wheelView: 'functional',
   }
 
   const engine = new ChordPracticeEngine()
@@ -191,14 +197,32 @@ export function mountChordFingering(host: HTMLElement): () => void {
     },
   )
 
-  // 和弦魔方：点节点切换和弦（根音 + 大三/属七/小三），渲染由 renderWheel 驱动
-  const wheel = buildHarmonyWheel((sel: WheelChord) => {
+  // 和弦魔方：点节点切换和弦（减七节点也可点），渲染由 renderWheel 驱动
+  const pickChord = (sel: WheelChord): void => {
     state.root = sel.root
     state.quality = sel.quality
     state.inversion = 0
     setFeedback(null)
     renderAll()
-  })
+  }
+  const wheelFunctional = buildHarmonyWheel('functional', pickChord)
+  const wheelVoiceleading = buildHarmonyWheel('voiceleading', pickChord)
+  const viewSeg = makeSeg<WheelView>(
+    ['functional', 'voiceleading'] as const,
+    (v) => (v === 'functional' ? '转调图' : '走线图'),
+    (v) => {
+      if (state.wheelView === v) return
+      state.wheelView = v
+      renderAll()
+    },
+  )
+  const wheelWrap = el(
+    'div',
+    { class: 'chordf__wheelwrap', hidden: true },
+    viewSeg.el,
+    wheelFunctional.el,
+    wheelVoiceleading.el,
+  )
 
   const transposeLabel = el('span', { class: 'chordf__transpose-val' }, '0')
   const shiftTranspose = (d: number): void => {
@@ -320,7 +344,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     headline,
     feedback,
     examBar,
-    wheel.el,
+    wheelWrap,
     keyboard.el,
   )
   host.append(el('div', { class: 'chordf' }, inner))
@@ -573,7 +597,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.setBadges(showTarget ? new Map(q.pitches.map((p, i) => [p, q.fingers[i]])) : new Map())
   }
 
-  /** 魔方模式：键盘照常显示选中和弦与弹奏回显；轮上高亮选中和弹奏识别的节点 */
+  /** 魔方模式：键盘照常显示选中和弦与弹奏回显；图上高亮选中和弹奏识别的节点 */
   function renderWheel(): void {
     const notes = getChordNotes(state.root, state.quality, state.inversion)
     const pitches = notes.pitches.map((p) => p + state.transpose)
@@ -587,13 +611,23 @@ export function mountChordFingering(host: HTMLElement): () => void {
 
     const held = new Set([...virtualHeld, ...midiHeld])
     const detected = detectChord(held)
+    // 减七等音多解：一个减七音集点亮全部 4 个 ° 节点（转调枢纽的教学点）
+    const played: WheelChord[] =
+      detected === null
+        ? []
+        : detected.quality === 'diminished7'
+          ? detectDim7Roots(held).map((r) => ({ root: r, quality: 'diminished7' as const }))
+          : [{ root: detected.root, quality: detected.quality }]
     headlineMain.textContent = chordSymbol(state.root, state.quality)
     headlineSub.textContent = [
+      state.wheelView === 'functional' ? '转调图' : '走线图',
       INVERSION_NAMES[state.inversion],
       HAND_NAMES[state.hand],
       `指法 ${fingering.fingers.join('-')}`,
       detected !== null
-        ? `弹奏识别：${chordSymbol(detected.root, detected.quality)}`
+        ? `弹奏识别：${chordSymbol(detected.root, detected.quality)}${
+            detected.quality === 'diminished7' ? '（等音 4 解）' : ''
+          }`
         : '弹琴实时定位（需 3–4 个音）',
     ]
       .filter(Boolean)
@@ -612,17 +646,23 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.paint(lit)
     keyboard.setBadges(new Map(pitches.map((p, i) => [p, fingering.fingers[i]])))
 
-    // 轮上节点：选中（琥珀）+ 弹奏识别（绿）；根音拼写折到五度圈扇区（C# → Db）
+    // 图上节点：选中（琥珀）+ 弹奏识别（绿）；根音拼写折到五度圈扇区（C# → Db）
     const wheelSel = WHEEL_QUALITIES.includes(state.quality)
       ? { root: wheelRootName(state.root), quality: state.quality as WheelChord['quality'] }
       : null
-    wheel.setSelected(wheelSel)
-    wheel.setPlayed(detected)
+    const playedList = played.map((c) => ({ ...c, root: wheelRootName(c.root) }))
+    wheelFunctional.setSelected(wheelSel)
+    wheelFunctional.setPlayed(playedList)
+    wheelVoiceleading.setSelected(wheelSel)
+    wheelVoiceleading.setPlayed(playedList)
   }
 
   function renderAll(): void {
     renderRows()
-    wheel.el.hidden = state.mode !== 'wheel'
+    wheelWrap.hidden = state.mode !== 'wheel'
+    wheelFunctional.el.hidden = state.wheelView !== 'functional'
+    wheelVoiceleading.el.hidden = state.wheelView !== 'voiceleading'
+    viewSeg.set(state.wheelView)
     if (state.mode === 'browse') renderBrowse()
     else if (state.mode === 'wheel') renderWheel()
     else renderPractice()
