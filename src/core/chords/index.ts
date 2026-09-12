@@ -16,3 +16,10 @@ export {
   type ParsedChordSymbol,
 } from './parse'
 export { BASE_ROOT_PITCH, getChordNotes, type ChordNotes } from './notes'
+export {
+  DETECT_QUALITIES,
+  FIFTHS_ORDER,
+  detectChord,
+  type DetectedChord,
+  type DetectedQuality,
+} from './chord-detect'

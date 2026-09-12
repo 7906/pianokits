@@ -1987,6 +1987,147 @@ input[type='range']::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- 和弦魔方（和声轮） ----------
+   五度圈 12 扇区 × 大三(外)/属七(中)/小三(内) 三层节点；
+   走线常驻暗色，选中（琥珀）/弹奏识别（绿）时点亮 */
+.hw {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.hw[hidden] {
+  display: none;
+}
+
+.hw__svg {
+  width: min(92vw, 560px);
+  height: auto;
+  touch-action: manipulation;
+}
+
+.hw__legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.8125rem;
+  color: var(--text-1);
+}
+
+.hw__legend-item::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+.hw__legend-item--major::before {
+  background: var(--hw-major, #e0695e);
+}
+
+.hw__legend-item--dominant7::before {
+  background: var(--hw-dom7, #d9a45b);
+}
+
+.hw__legend-item--minor::before {
+  background: var(--hw-minor, #64a8dc);
+}
+
+.hw__legend-hint {
+  color: var(--text-2);
+}
+
+/* 节点：分类配色描边 + 深底 */
+.hw__node {
+  cursor: pointer;
+}
+
+.hw__hit {
+  fill: transparent;
+}
+
+.hw__node--major .hw__circle {
+  fill: #221a18;
+  stroke: #e0695e;
+  stroke-width: 2;
+}
+
+.hw__node--dominant7 .hw__circle {
+  fill: #221f16;
+  stroke: #d9a45b;
+  stroke-width: 2;
+}
+
+.hw__node--minor .hw__circle {
+  fill: #161e26;
+  stroke: #64a8dc;
+  stroke-width: 2;
+}
+
+.hw__label {
+  font-size: 17px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.hw__node--major .hw__label {
+  fill: #ef9c92;
+}
+
+.hw__node--dominant7 .hw__label {
+  fill: #e4b871;
+}
+
+.hw__node--minor .hw__label {
+  fill: #9cc6ec;
+}
+
+/* 选中（琥珀光环）/ 弹奏识别（绿光环） */
+.hw__node.is-selected .hw__circle {
+  stroke: var(--accent-hover);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 6px rgba(217, 164, 91, 0.8));
+}
+
+.hw__node.is-played .hw__circle {
+  stroke: var(--success);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 7px rgba(127, 178, 133, 0.9));
+}
+
+/* 走线：常驻暗色；随选中（琥珀）/弹奏（绿）点亮 */
+.hw__link {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1.5;
+}
+
+.hw__link--rel {
+  stroke-dasharray: 4 5;
+}
+
+.hw__link--from-selected {
+  stroke: rgba(217, 164, 91, 0.9);
+  stroke-width: 2.5;
+}
+
+.hw__link--from-selected[marker-end] {
+  marker-end: url(#hw-arrow-sel);
+}
+
+.hw__link--from-played {
+  stroke: rgba(127, 178, 133, 0.9);
+  stroke-width: 2.5;
+}
+
+.hw__link--from-played[marker-end] {
+  marker-end: url(#hw-arrow-played);
+}
+
 /* ---------- 降低动效偏好 ---------- */
 @media (prefers-reduced-motion: reduce) {
   *,
