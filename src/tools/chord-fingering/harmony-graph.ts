@@ -29,7 +29,7 @@ export interface FigureNode {
   pick?: { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' }
 }
 
-export type FigureEdgeKind = 'ring' | 'res' | 'rel' | 'dim' | 'anchor' | 'chain'
+export type FigureEdgeKind = 'ring' | 'res' | 'rel' | 'dim' | 'anchor' | 'chain' | 'iiv'
 
 export interface FigureEdge {
   id: string
@@ -216,6 +216,8 @@ export function buildFigure(kind: FigureKind): HarmonyFigure {
       // 外环：I ↔ V7 ↔ V（双向，任何方向都可走）
       addEdge(`${root}/major`, dom, 'ring', 'both')
       addEdge(dom, `${SECTORS[domSector].root}/major`, 'ring', 'both')
+      // ii → V7（pre-dominant→dominant，原书经低音链暗示；补成语义边消除训练死端）
+      addEdge(`${SECTORS[iiSector].root}/minor`, dom, 'iiv', 'end')
       // 和弦 → 自己的低音锚点；ii 锚点竖连 I 锚点
       addEdge(`${root}/major`, `bass:${label}4`, 'anchor', 'none')
       addEdge(
@@ -263,6 +265,7 @@ export const EDGE_TYPE_BY_KIND: Readonly<Record<FigureEdgeKind, string>> = {
   dim: 'modulation',
   anchor: 'bass',
   chain: 'bass',
+  iiv: 'cycle',
 }
 
 /** 语义边基础权重：解决 4 > 环线 3 > 关系 2 > 转调 1（bass 不参与训练，恒 1） */
@@ -273,6 +276,7 @@ export const EDGE_WEIGHT_BY_KIND: Readonly<Record<FigureEdgeKind, number>> = {
   dim: 1,
   anchor: 1,
   chain: 1,
+  iiv: 3,
 }
 
 /** 和弦节点 id → 根音/质量（薄弱连接视图与出题用） */

@@ -103,6 +103,11 @@ export interface PickNextEdgeOptions {
   masteryOf?: (edgeId: string) => number
   /** 随机源 [0,1)；可注入做确定性测试 */
   random?: () => number
+  /**
+   * 贪心策略（Mode B「预测」用）：不走加权随机，改选**最高基础权重**的出边
+   * （忽略 mastery——路线须可学习），同权重按目标节点 id 字典序，完全确定。
+   */
+  greedy?: boolean
 }
 
 /**
@@ -120,6 +125,12 @@ export function pickNextEdge(
   const avoid = options.avoidNodeId
   const candidates = avoid === undefined ? all : all.filter((e) => e.to !== avoid)
   const pool = candidates.length > 0 ? candidates : all
+  if (options.greedy === true) {
+    const sorted = [...pool].sort(
+      (x, y) => y.weight - x.weight || (x.to < y.to ? -1 : x.to > y.to ? 1 : 0),
+    )
+    return sorted[0] ?? null
+  }
   const masteryOf = options.masteryOf ?? (() => 0.5)
   const weights = pool.map((e) => effectiveWeight(e.weight, masteryOf(e.id)))
   const total = weights.reduce((s, w) => s + w, 0)

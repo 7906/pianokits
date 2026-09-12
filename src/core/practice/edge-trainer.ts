@@ -49,17 +49,22 @@ export interface TrainerState {
 
 export const MAX_PATH_LENGTH = 50
 
+export type TrainerStrategy = 'random' | 'greedy'
+
 export interface EdgeTrainerOptions {
   /** 边级统计存储：采样权重读 mastery，作答结果写入此处 */
   stats?: EdgeStatsStore
   /** 随机源（可注入做确定性测试） */
   random?: () => number
+  /** 选边策略：random = 加权随机（Mode A 跟弹）；greedy = 最高权重确定路线（Mode B 预测，可学习） */
+  strategy?: TrainerStrategy
 }
 
 export class EdgeTrainer {
   private readonly index: EdgeGraphIndex
   private readonly stats: EdgeStatsStore | null
   private readonly random: () => number
+  private strategy: TrainerStrategy
   private currentNode: string | null = null
   private activeEdge: GraphEdge | null = null
   private path: TrainerPathStep[] = []
@@ -71,6 +76,22 @@ export class EdgeTrainer {
     this.index = indexGraph(graph)
     this.stats = options.stats ?? null
     this.random = options.random ?? Math.random
+    this.strategy = options.strategy ?? 'random'
+  }
+
+  /** 切换选边策略（跟弹↔预测）；不清空路径与统计 */
+  setStrategy(strategy: TrainerStrategy): void {
+    this.strategy = strategy
+  }
+
+  /** 定向练习：强制以指定边为当前活跃边（薄弱连接点击即练）；边不存在返回 false */
+  focusEdge(edgeId: string): boolean {
+    const edge = this.index.edgeById.get(edgeId)
+    if (edge === undefined) return false
+    this.currentNode = edge.from
+    this.activeEdge = edge
+    this.reported = false
+    return true
   }
 
   get currentNodeId(): string | null {
@@ -111,13 +132,18 @@ export class EdgeTrainer {
       avoidNodeId: avoid,
       masteryOf,
       random: this.random,
+      greedy: this.strategy === 'greedy',
     })
     if (edge === null) {
       // 死端（如走线图的 ii 小三只有视觉锚点连线）：跳到随机其他节点再试一次
       const jump = this.randomNode(this.currentNode)
       if (jump === null) return
       from = jump
-      edge = pickNextEdge(this.index, from, { masteryOf, random: this.random })
+      edge = pickNextEdge(this.index, from, {
+        masteryOf,
+        random: this.random,
+        greedy: this.strategy === 'greedy',
+      })
       if (edge === null) return
     }
     this.currentNode = from

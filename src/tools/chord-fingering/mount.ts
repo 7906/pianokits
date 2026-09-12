@@ -219,15 +219,42 @@ export function mountChordFingering(host: HTMLElement): () => void {
       renderAll()
     },
   )
-  let wheelGuided = false // 魔方跟弹：目标节点在图上脉冲高亮，弹对自动下一题
-  const guidedToggle = el(
+  // 魔方练习模式：null = 关闭；follow = 跟弹（目标可见）；predict = 预测（目标隐藏，
+  // 路线按和声倾向贪心选择——resolution 优先、同权重回大三，可学习可预判）
+  let wheelGuided = false
+  let wheelPredict = false
+  let continuousFlow = false // 连续流：弹对后跳过等待直接下一题
+  let questionSettled = false // 本题已记录结果，忽略后续输入直到换题
+  let predictMissSeen = false // 预测模式：按住的音已构成非目标和弦（全部松开后结算为失败）
+  const followChip = el(
     'button',
     {
       class: 'chordf__chip',
-      title: '魔方跟弹：目标和弦节点高亮，在琴上弹对自动下一题',
-      onclick: () => toggleWheelGuided(),
+      title: '跟弹：目标和弦节点高亮，在琴上弹对自动下一题',
+      onclick: () => setWheelMode(wheelGuided && !wheelPredict ? null : 'follow'),
     },
     '跟弹',
+  )
+  const predictChip = el(
+    'button',
+    {
+      class: 'chordf__chip',
+      title: '预测：只显示当前和弦，按和声倾向预判下一站并弹出',
+      onclick: () => setWheelMode(wheelPredict ? null : 'predict'),
+    },
+    '预测',
+  )
+  const flowChip = el(
+    'button',
+    {
+      class: 'chordf__chip',
+      title: '连续流：弹对后不加等待，直接进入下一题',
+      onclick: () => {
+        continuousFlow = !continuousFlow
+        flowChip.classList.toggle('is-active', continuousFlow)
+      },
+    },
+    '连流',
   )
   // 薄弱连接轻量视图：Top 5 低熟练转换（验证 Edge Mastery 是否真的工作）
   const weakPanel = el('div', { class: 'chordf__weak', hidden: true })
@@ -248,7 +275,9 @@ export function mountChordFingering(host: HTMLElement): () => void {
     'div',
     { class: 'chordf__wheelhead' },
     viewSeg.el,
-    guidedToggle,
+    followChip,
+    predictChip,
+    flowChip,
     weakToggle,
   )
   // 训练状态条：最近一步 / 本次计数 / 路径
@@ -395,7 +424,8 @@ export function mountChordFingering(host: HTMLElement): () => void {
   })
   const offSolved = engine.onSolved(() => {
     const q = question
-    if (!hasQuiz() || q === null) return
+    if (!hasQuiz() || q === null || questionSettled) return
+    questionSettled = true
     streak += 1
     total += 1
     // 解答成立：目标键闪绿并亮出指法
@@ -413,7 +443,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
       pathBar.textContent = trainerStepText(trainerState)
     }
     renderExamBar()
-    nextTimer = window.setTimeout(() => next(), 900)
+    nextTimer = window.setTimeout(() => next(), autoNextDelay())
   })
 
   /** 是否处于键盘出题练习（跟弹 / 考试） */
@@ -439,6 +469,53 @@ export function mountChordFingering(host: HTMLElement): () => void {
 
   function syncHeld(): void {
     engine.setHeld(new Set([...virtualHeld, ...midiHeld]))
+    const heldAll = [...virtualHeld, ...midiHeld]
+    // —— 预测模式：按音级内容判定（任意排列都算），不要求与题目同八度 ——
+    if (state.mode === 'wheel' && wheelPredict && question !== null && !questionSettled) {
+      const targetNode = trainerState?.targetNodeId ?? null
+      const detected = heldAll.length >= 3 ? detectChord(heldAll) : null
+      if (detected !== null && targetNode !== null) {
+        const detectedNode = `${wheelRootName(detected.root)}/${detected.quality}`
+        if (detectedNode === targetNode) {
+          // 预判正确：按住的键闪绿，成功入账并推进
+          questionSettled = true
+          streak += 1
+          total += 1
+          const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+          for (const p of heldAll) lit.set(p, { state: 'solved', alpha: 1, glow: 0.5 })
+          keyboard.paint(lit)
+          if (trainer !== null) {
+            trainer.reportResult(true, performance.now() - questionStartedAt)
+            trainerState = trainer.state()
+            pathBar.hidden = false
+            pathBar.textContent = trainerStepText(trainerState)
+          }
+          renderExamBar()
+          nextTimer = window.setTimeout(() => next(), autoNextDelay())
+        } else {
+          predictMissSeen = true // 非目标和弦：弹奏途中不判错，等全部松开再结算
+        }
+      }
+      if (predictMissSeen && heldAll.length === 0) {
+        // 预判错误结算：记一次失败，短暂揭示路线后推进
+        questionSettled = true
+        streak = 0
+        if (trainer !== null) {
+          trainer.reportResult(false)
+          trainerState = trainer.state()
+          pathBar.hidden = false
+          pathBar.textContent = trainerStepText(trainerState)
+        }
+        const q = question
+        const reveal = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+        for (const p of q.pitches) reveal.set(p, { state: 'held', alpha: 0.9, glow: 0.4 })
+        keyboard.paint(reveal)
+        renderExamBar()
+        nextTimer = window.setTimeout(() => next(), continuousFlow ? 800 : 1500)
+        return
+      }
+    }
+    if (questionSettled && state.mode === 'wheel') return // 已结算：保留揭示画面
     // Edge 训练失败检测：本题按错过、且现在全部松开仍未成立 → 记一次失败
     // （不打断训练：不结束计时，弹对后仍记成功；同一题失败只记一次）
     if (state.mode === 'wheel' && wheelGuided && trainer !== null && question !== null) {
@@ -532,6 +609,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
         trainer !== null && trainer.targetNodeId !== null ? trainer.targetNodeId : null
       trainer = new EdgeTrainer(toEdgeGraph(figure), {
         stats: getEdgeStats(),
+        strategy: wheelPredict ? 'greedy' : 'random',
       })
       trainerView = state.wheelView
       trainerState = null
@@ -620,17 +698,42 @@ export function mountChordFingering(host: HTMLElement): () => void {
     questionStartedAt = performance.now()
     questionHadWrong = false
     questionFailReported = false
+    questionSettled = false
+    predictMissSeen = false
     engine.setQuestion(question.pitches)
     renderWheel()
     renderExamBar()
   }
 
-  /** 魔方跟弹开关：开启即出题，关闭复位判定与计数（trainer 保留以便续练） */
-  function toggleWheelGuided(): void {
-    wheelGuided = !wheelGuided
+  /** 自动进入下一题的等待（连续流开启时几乎无等待） */
+  function autoNextDelay(): number {
+    return state.mode === 'wheel' && continuousFlow ? 120 : 900
+  }
+
+  /** 薄弱连接定向练习：从该边的起点直接开始训练这条连接 */
+  function focusWeakEdge(edgeId: string): void {
+    if (state.mode !== 'wheel') return
+    if (!wheelGuided) setWheelMode('follow')
+    const tr = getTrainer()
+    if (!tr.focusEdge(edgeId)) return
+    weakPanel.hidden = true
+    weakToggle.classList.remove('is-active')
+    if (nextTimer !== undefined) {
+      clearTimeout(nextTimer)
+      nextTimer = undefined
+    }
+    askWheel()
+  }
+
+  /** 魔方练习模式开关：开启即出题，关闭复位判定与计数（trainer 保留以便续练） */
+  function setWheelMode(mode: 'follow' | 'predict' | null): void {
+    wheelGuided = mode !== null
+    wheelPredict = mode === 'predict'
     streak = 0
     total = 0
     if (wheelGuided) {
+      getTrainer().setStrategy(wheelPredict ? 'greedy' : 'random')
+      questionSettled = false
       askWheel()
     } else {
       if (nextTimer !== undefined) {
@@ -641,6 +744,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
       engine.reset()
       virtualHeld.clear()
       trainerState = null
+      questionSettled = false
     }
     renderAll()
   }
@@ -843,8 +947,12 @@ export function mountChordFingering(host: HTMLElement): () => void {
       const { from, to } = pairOfEdgeId(row.edgeId)
       weakPanel.append(
         el(
-          'div',
-          { class: 'chordf__weak-row' },
+          'button',
+          {
+            class: 'chordf__weak-row',
+            title: '定向练习：直接从这条连接开始',
+            onclick: () => focusWeakEdge(row.edgeId),
+          },
           el('span', { class: 'chordf__weak-pair' }, `${nodeSymbol(from)} → ${nodeSymbol(to)}`),
           el(
             'span',
@@ -879,7 +987,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     if (wheelGuided && question !== null && state.mode === 'wheel') {
       // —— 跟弹：目标节点脉冲 + 键盘目标键位/指法 ——
       const q = question
-      if (st.solved) return // onSolved 已画绿色与指法，等待自动下一题
+      if (st.solved || questionSettled) return // 已结算：保留成功/揭示画面，等待自动下一题
       const qFingering = getChordFingering({
         root: q.root,
         quality: q.quality,
@@ -887,6 +995,39 @@ export function mountChordFingering(host: HTMLElement): () => void {
         hand: state.hand,
         profile: state.profileId,
       })
+      if (wheelPredict) {
+        // —— 预测：只亮当前位置；目标完全隐藏，凭和声倾向预判下一站 ——
+        headlineMain.textContent = `预判：${nodeSymbol(trainerState?.currentNodeId ?? '')} → ?`
+        headlineSub.textContent = [
+          wheelViewName,
+          '弹这条走线的下一站（任意转位/排列，按音判定）',
+          '倾向提示：解决线最优先，同权重回大三',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+        const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+        for (const p of st.held) lit.set(p, { state: 'held', alpha: 1, glow: 0.3 })
+        for (const p of st.wrong) lit.set(p, { state: 'wrong', alpha: 1, glow: 0.6 })
+        keyboard.paint(lit)
+        const currentNode =
+          trainerState !== null && trainerState.currentNodeId !== ''
+            ? wheelNodeFromId(trainerState.currentNodeId)
+            : null
+        wheelFunctional.setSelected(currentNode)
+        wheelVoiceleading.setSelected(currentNode)
+        wheelFunctional.setTarget(null)
+        wheelVoiceleading.setTarget(null)
+        wheelFunctional.setActiveEdge(null)
+        wheelVoiceleading.setActiveEdge(null)
+        const visitedPairs = (trainerState?.recentPath ?? []).map((p) => pairOfEdgeId(p.edgeId))
+        wheelFunctional.setVisitedEdges(visitedPairs)
+        wheelVoiceleading.setVisitedEdges(visitedPairs)
+        wheelFunctional.setPlayed([])
+        wheelVoiceleading.setPlayed([])
+        pathBar.hidden = trainerState === null
+        if (trainerState !== null) pathBar.textContent = trainerStepText(trainerState)
+        return
+      }
       headlineMain.textContent = `请弹奏：${chordSymbol(q.root, q.quality)}`
       headlineSub.textContent = [
         wheelViewName,
@@ -994,7 +1135,8 @@ export function mountChordFingering(host: HTMLElement): () => void {
     wheelFunctional.el.hidden = state.wheelView !== 'functional'
     wheelVoiceleading.el.hidden = state.wheelView !== 'voiceleading'
     viewSeg.set(state.wheelView)
-    guidedToggle.classList.toggle('is-active', wheelGuided)
+    followChip.classList.toggle('is-active', wheelGuided && !wheelPredict)
+    predictChip.classList.toggle('is-active', wheelPredict)
     examBar.hidden = state.mode === 'browse' || (state.mode === 'wheel' && !wheelGuided)
     exitBtn.hidden = state.mode === 'wheel'
     hintBtn.hidden = state.mode !== 'exam'

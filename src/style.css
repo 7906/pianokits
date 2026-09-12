@@ -2204,6 +2204,12 @@ input[type='range']::-moz-range-thumb {
   stroke-dasharray: 2 4;
 }
 
+/* ii→V7（训练完备性补充边，原图经低音链暗示） */
+.hw__edge--iiv {
+  stroke: rgba(217, 164, 91, 0.22);
+  stroke-dasharray: 5 4;
+}
+
 /* 选中（琥珀）/ 弹奏（绿）点亮入射走线 */
 .hw__edge.is-selected {
   stroke: rgba(217, 164, 91, 0.9);
@@ -2281,6 +2287,16 @@ input[type='range']::-moz-range-thumb {
   align-items: center;
   gap: 10px;
   font-size: 0.875rem;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.chordf__weak-row:hover {
+  background: var(--bg-2);
 }
 
 .chordf__weak-pair {

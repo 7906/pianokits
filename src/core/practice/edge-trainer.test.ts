@@ -170,3 +170,35 @@ describe('EdgeTrainer + ChordPracticeEngine 集成（判定/行进/统计分离�
     expect(s.targetNodeId).toBe('c')
   })
 })
+
+describe('EdgeTrainer：strategy 与 focusEdge', () => {
+  it('greedy 策略：advance 沿最高权重确定路线', () => {
+    const g: EdgeGraph = {
+      nodeIds: ['a', 'b', 'c'],
+      edges: [
+        { id: 'a->b:resolution', from: 'a', to: 'b', type: 'resolution', weight: 4 },
+        { id: 'a->c:relative', from: 'a', to: 'c', type: 'relative', weight: 2 },
+        { id: 'b->a:resolution', from: 'b', to: 'a', type: 'resolution', weight: 4 },
+        { id: 'c->a:resolution', from: 'c', to: 'a', type: 'resolution', weight: 4 },
+      ],
+    }
+    const tr = new EdgeTrainer(g, { strategy: 'greedy', random: Math.random })
+    tr.start('a')
+    expect(stateOf(tr).targetNodeId).toBe('b') // resolution(4) > relative(2)
+  })
+
+  it('setStrategy 可切换；focusEdge 定向到指定边并可直接作答', () => {
+    const store = new EdgeStatsStore(null)
+    const tr = new EdgeTrainer(triangle(), { stats: store, random: () => 0 })
+    tr.setStrategy('greedy')
+    tr.start('a')
+    expect(stateOf(tr).targetNodeId).toBe('b')
+    expect(tr.focusEdge('c->a:resolution')).toBe(true)
+    const s = stateOf(tr)
+    expect(s.currentNodeId).toBe('c')
+    expect(s.targetNodeId).toBe('a')
+    tr.reportResult(true, 900)
+    expect(store.get('c->a:resolution').successes).toBe(1)
+    expect(tr.focusEdge('nope')).toBe(false)
+  })
+})

@@ -129,3 +129,39 @@ describe('加权选择：类型权重与熟练度', () => {
     expect(effectiveWeight(4, 0.9)).toBe(2)
   })
 })
+
+describe('greedy 策略（Mode B 预测：可学习的确定性路线）', () => {
+  const g: EdgeGraph = {
+    nodeIds: ['a', 'b', 'c', 'd'],
+    edges: [
+      { id: 'a->b:resolution', from: 'a', to: 'b', type: 'resolution', weight: 4 },
+      { id: 'a->c:relative', from: 'a', to: 'c', type: 'relative', weight: 2 },
+      { id: 'a->d:modulation', from: 'a', to: 'd', type: 'modulation', weight: 1 },
+    ],
+  }
+
+  it('贪心选最高基础权重，忽略 mastery（路线可学习）', () => {
+    const idx = indexGraph(g)
+    for (let i = 0; i < 50; i++) {
+      const e = pickNextEdge(idx, 'a', {
+        greedy: true,
+        masteryOf: (id) => (id === 'a->b:resolution' ? 0.95 : 0.2), // 不影响
+        random: Math.random,
+      })
+      expect(e?.to).toBe('b')
+    }
+  })
+
+  it('同权重按目标节点 id 字典序，完全确定', () => {
+    const g2: EdgeGraph = {
+      nodeIds: ['a', 'z', 'm'],
+      edges: [
+        { id: 'a->z:x', from: 'a', to: 'z', type: 'x', weight: 4 },
+        { id: 'a->m:x', from: 'a', to: 'm', type: 'x', weight: 4 },
+      ],
+    }
+    const idx = indexGraph(g2)
+    const e = pickNextEdge(idx, 'a', { greedy: true })
+    expect(e?.to).toBe('m')
+  })
+})

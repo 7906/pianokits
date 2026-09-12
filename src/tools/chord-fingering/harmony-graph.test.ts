@@ -90,10 +90,16 @@ describe('toEdgeGraph：figure → 有向语义图（单一真相的投影）', 
     expect(getOutgoingEdges(idx, 'B/diminished7').every((e) => e.type === 'modulation')).toBe(true)
   })
 
-  it('走线图：ii 小三没有和弦→和弦出边（只经低音锚点视觉连接）→ 语义死端', () => {
+  it('走线图：ii → V7 语义边消除死端（所有节点都有出边）', () => {
     const g = toEdgeGraph(voiceleading)
     const idx = indexGraph(g)
-    expect(getOutgoingEdges(idx, 'D/minor')).toHaveLength(0)
+    // ii 小三的出边 = V7（cycle，pre-dominant→dominant）
+    const iiOuts = getOutgoingEdges(idx, 'D/minor').map((e) => `${e.to}:${e.type}`)
+    expect(iiOuts).toEqual(['G/dominant7:cycle'])
+    // 无死端：每个和弦节点都有出边
+    for (const nodeId of g.nodeIds) {
+      expect(getOutgoingEdges(idx, nodeId).length, nodeId).toBeGreaterThan(0)
+    }
     // 大三/属七有环线出边
     expect(getOutgoingEdges(idx, 'C/major').length).toBeGreaterThan(0)
     expect(getOutgoingEdges(idx, 'G/dominant7').length).toBeGreaterThan(0)
