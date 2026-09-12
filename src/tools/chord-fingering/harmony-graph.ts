@@ -248,47 +248,69 @@ export function buildFigure(kind: FigureKind): HarmonyFigure {
 
 export { SECTORS as FIGURE_SECTORS, VIEW as FIGURE_VIEW }
 
-/** 跟弹行进：走线语义权重——解决线最强，环线（五度圈）次之，其余按 1 计 */
-const WALK_WEIGHT: Readonly<Record<FigureEdgeKind, number>> = {
+// ---------- 语义图投影（Graph-Driven 训练） ----------
+// 和声图唯一真相仍是上方的 buildFigure；此处把它投影为通用 EdgeGraph：
+// 节点 = 可点选和弦节点；边 = 两端都是和弦节点的走线（锚点/低音链不构成和弦转换）。
+// 双向箭头（both）拆成两条有向边——C→G7 与 G7→C 是两个独立训练对象。
+
+import { edgeId, type EdgeGraph, type GraphEdge } from '../../core/practice/edge-graph'
+
+/** 走线种类 → 语义边类型（对应 core 的 HarmonyEdgeType 语义） */
+export const EDGE_TYPE_BY_KIND: Readonly<Record<FigureEdgeKind, string>> = {
+  res: 'resolution',
+  ring: 'cycle',
+  rel: 'relative',
+  dim: 'modulation',
+  anchor: 'bass',
+  chain: 'bass',
+}
+
+/** 语义边基础权重：解决 4 > 环线 3 > 关系 2 > 转调 1（bass 不参与训练，恒 1） */
+export const EDGE_WEIGHT_BY_KIND: Readonly<Record<FigureEdgeKind, number>> = {
   res: 4,
   ring: 3,
   rel: 2,
+  dim: 1,
   anchor: 1,
   chain: 1,
-  dim: 1,
 }
 
-/**
- * 跟弹的下一步：从 from 节点的**入射走线**里挑一个相邻和弦节点（加权随机），
- * 永不返回 avoidId（上上题，防来回弹跳）；没有可用邻居（或全部被避让）返回 null。
- * 走线图的锚点/链边没有和弦（pick 为空）不参与——行进只落在和弦节点上，
- * 序列因此严格沿着图上画出的路径走。
- */
-export function randomNeighborChord(
+/** 和弦节点 id → 根音/质量（薄弱连接视图与出题用） */
+export function chordByNode(
   figure: HarmonyFigure,
-  from: { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' },
-  avoidId?: string,
-): { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' } | null {
-  const fromId = `${from.root}/${from.quality}`
-  const byId = new Map(figure.nodes.map((n) => [n.id, n]))
-  const candidates: {
-    chord: { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' }
-    w: number
-  }[] = []
+): Map<string, { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' }> {
+  const map = new Map<
+    string,
+    { root: NoteName; quality: 'major' | 'minor' | 'dominant7' | 'diminished7' }
+  >()
+  for (const n of figure.nodes) {
+    if (n.pick !== undefined) map.set(n.id, n.pick)
+  }
+  return map
+}
+
+/** 把 figure 投影为有向语义边图（只含和弦节点与和弦→和弦转换） */
+export function toEdgeGraph(figure: HarmonyFigure): EdgeGraph {
+  const nodeIds = figure.nodes.filter((n) => n.pick !== undefined).map((n) => n.id)
+  const edges: GraphEdge[] = []
+  const seen = new Set<string>()
   for (const e of figure.edges) {
-    if (e.fromId !== fromId && e.toId !== fromId) continue
-    const otherId = e.fromId === fromId ? e.toId : e.fromId
-    if (otherId === avoidId) continue
-    const other = byId.get(otherId)
-    if (other === undefined || other.pick === undefined) continue
-    candidates.push({ chord: { ...other.pick }, w: WALK_WEIGHT[e.kind] })
+    // 锚点/低音链至少一端不是和弦节点：不构成和弦转换
+    if (e.kind === 'anchor' || e.kind === 'chain') continue
+    const type = EDGE_TYPE_BY_KIND[e.kind]
+    const weight = EDGE_WEIGHT_BY_KIND[e.kind]
+    // 和弦间连线生成**两个方向**的独立训练边（规格原则 2：C→G7 与 G7→C 是
+    // 两条不同的训练连接）——type 标注这条线的和声关系，方向区分训练对象，
+    // 各自独立记 mastery。逆行（如 I→V7、主音→减七枢纽）也是合法练习路径。
+    for (const [from, to] of [
+      [e.fromId, e.toId],
+      [e.toId, e.fromId],
+    ]) {
+      const id = edgeId(from, to, type)
+      if (seen.has(id)) continue
+      seen.add(id)
+      edges.push({ id, from, to, type, weight })
+    }
   }
-  if (candidates.length === 0) return null
-  const total = candidates.reduce((s, c) => s + c.w, 0)
-  let r = Math.random() * total
-  for (const c of candidates) {
-    r -= c.w
-    if (r <= 0) return c.chord
-  }
-  return candidates[candidates.length - 1].chord
+  return { nodeIds, edges }
 }

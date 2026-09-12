@@ -201,3 +201,38 @@ Vitest 参数化（`src/**/*.test.ts`，node 环境）：
 - 走过的路保持可见：上一题节点琥珀选中态 + 入射走线点亮，新目标脉冲，
   标题副行显示「从 X 沿走线行进」；
 - 行进根音拼写与图一致（FIFTHS_ORDER），和弦质量限定图上四类。
+
+### 3.11 Graph-Driven 边训练（2026-09-13 增补）
+
+魔方跟弹从「沿邻接随机走」升级为**边驱动训练系统**——训练对象从和弦节点
+升级为**有向边（和弦转换）**，边级熟练度反向影响出题概率。
+
+**三层职责分离**（`src/core/practice/`）：
+
+- `edge-graph.ts`：通用有向边图模型（`GraphEdge = {id, from, to, type, weight}`，
+  稳定 id `${from}->${to}:${type}`）+ 纯函数 API（getOutgoingEdges / getIncomingEdges /
+  getEdge / pickNextEdge）。采样：effectiveWeight = baseWeight ×
+  weaknessMultiplier(mastery)（m<0.3→×3、<0.6→×2、<0.85→×1、≥0.85→×0.5，永不清零）；
+  防弹跳先过滤 avoid 节点、过滤致空回退全部出边；随机源可注入。
+- `edge-stats.ts`：边级统计（attempts/successes/failures/consecutiveSuccesses/
+  totalResponseTimeMs/lastPracticedAt）。mastery = accuracy×0.7 + speedScore×0.3，
+  accuracy 用拉普拉斯平滑 (s+1)/(a+2)，speedScore 1s 内满分、5s 起 0 分（只计成功），
+  未练过 = 0.5。存储可注入 KeyValueStorage（浏览器 = localStorage），key 版本化
+  `pianokits:chord-fingering:edge-stats:v1`，损坏数据安全回退空状态。
+- `edge-trainer.ts`：EdgeTrainer 会话状态机——当前节点 / 活跃边 / 目标节点 /
+  recentPath（≤50 步）/ session 计数；advance 从活跃边目标节点出发选下一条
+  （avoid 刚离开的节点）；死端节点跳步兜底；一题只记一次结果。
+
+**和声图投影**（`tools/chord-fingering/harmony-graph.ts` 的 `toEdgeGraph`）：
+figure 仍是唯一真相，投影为语义图——节点 = 48/36 个和弦节点（锚点除外）；
+和弦间连线全部生成**双向独立训练边**（规格原则 2：C→G7 与 G7→C 各自记
+mastery；type 标注和声关系 resolution/cycle/relative/modulation，权重 4/3/2/1）。
+
+**UI 接线**（mount.ts）：跟弹开启后出题 = trainer 目标节点；响应时间从目标出现
+计到弹对；本题按错且全松开未成立记一次失败（不打断训练）；视觉层级
+普通边 → visited（走过琥珀弱高亮）→ active（活跃边加粗+指向目标箭头）→
+target pulse；路径条显示「最近一步 G7→C ✓ 1.2s · 本次 N 步 X 对 Y 错 · 路径」；
+「薄弱」按钮弹出 Top5 低熟练连接（本地记录，刷新保留）。
+
+**Mode B/C/连续流预留**：trainer 状态不绑定「目标可见」；未来预测/盲走模式
+复用同一 graph/stats/path 基础，只改目标呈现方式。

@@ -109,6 +109,10 @@ export interface HarmonyWheel {
   setPlayed(sel: WheelChord[]): void
   /** 跟弹练习的目标节点（琥珀脉冲）；null 清除 */
   setTarget(sel: WheelChord | null): void
+  /** 活跃边（正在训练的转换，箭头指向目标）；null 清除 */
+  setActiveEdge(pair: { from: string; to: string } | null): void
+  /** 走过的路边（弱高亮，整体替换） */
+  setVisitedEdges(pairs: readonly { from: string; to: string }[]): void
 }
 
 export function buildHarmonyWheel(
@@ -121,6 +125,9 @@ export function buildHarmonyWheel(
   /** pick 和弦 → 节点 id（弹奏识别按此匹配） */
   const nodeByChord = new Map<string, string>()
   const edgesByNode = new Map<string, FigureEdge[]>()
+  /** 无序节点对 → 视觉走线（活跃边/走过的路边沿匹配用；同一对最多一条视觉线） */
+  const edgeByPair = new Map<string, { el: SVGLineElement; edge: FigureEdge }>()
+  const pairKey = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`)
 
   const linksG = svgEl('g', { class: 'hw__links' })
   const nodesG = svgEl('g', { class: 'hw__nodes' })
@@ -150,6 +157,7 @@ export function buildHarmonyWheel(
     listTo.push(e)
     edgesByNode.set(e.toId, listTo)
     ;(e as unknown as { el?: SVGLineElement }).el = elEdge
+    edgeByPair.set(pairKey(e.fromId, e.toId), { el: elEdge, edge: e })
   }
 
   // —— 节点 ——
@@ -228,6 +236,7 @@ export function buildHarmonyWheel(
       if (edgeEl === undefined) continue
       const on = hitIds.has(e.fromId) || hitIds.has(e.toId)
       edgeEl.classList.toggle(`is-${cls.replace('is-', '')}`, on)
+      if (edgeEl === activeEdgeEl) continue // 活跃边的方向箭头由 setActiveEdge 管理
       const marker = on ? EDGE_ARROW_CLASS[cls] : undefined
       if (marker !== undefined) {
         if (edgeEl.getAttribute('marker-end') !== null) edgeEl.setAttribute('marker-end', marker)
@@ -244,6 +253,45 @@ export function buildHarmonyWheel(
     }
   }
 
+  /** 活跃边（正在训练的转换）：琥珀加粗 + 指向目标的箭头；null 清除 */
+  let activeEdgeEl: SVGLineElement | null = null
+  const setActiveEdge = (pair: { from: string; to: string } | null): void => {
+    if (activeEdgeEl !== null) {
+      activeEdgeEl.classList.remove('is-active')
+      const prev = edgeByPair.get(pairKeyOfEl(activeEdgeEl))?.edge
+      if (prev !== undefined) {
+        if (prev.arrows === 'end') activeEdgeEl.setAttribute('marker-end', 'url(#hw-arrow)')
+        if (prev.arrows === 'both') {
+          activeEdgeEl.setAttribute('marker-end', 'url(#hw-arrow)')
+          activeEdgeEl.setAttribute('marker-start', 'url(#hw-arrow)')
+        }
+      }
+      activeEdgeEl = null
+    }
+    if (pair === null) return
+    const hit = edgeByPair.get(pairKey(pair.from, pair.to))
+    if (hit === undefined) return
+    activeEdgeEl = hit.el
+    hit.el.classList.add('is-active')
+    // 方向性：箭头指向目标节点（双向视觉线活跃时只保留 end 箭头）
+    if (hit.edge.arrows === 'both') hit.el.removeAttribute('marker-start')
+    hit.el.setAttribute('marker-end', 'url(#hw-arrow-sel)')
+  }
+
+  /** 走过的路（visited）：一组节点对，重复调用整体替换 */
+  const setVisitedEdges = (pairs: readonly { from: string; to: string }[]): void => {
+    const keys = new Set(pairs.map((p) => pairKey(p.from, p.to)))
+    for (const [key, { el }] of edgeByPair) {
+      if (el === activeEdgeEl) continue
+      el.classList.toggle('is-visited', keys.has(key))
+    }
+  }
+
+  function pairKeyOfEl(el: SVGLineElement): string {
+    for (const [key, v] of edgeByPair) if (v.el === el) return key
+    return ''
+  }
+
   return {
     el: root,
     setSelected(sel) {
@@ -256,5 +304,7 @@ export function buildHarmonyWheel(
     setTarget(sel) {
       highlight(sel === null ? null : [sel], 'is-target')
     },
+    setActiveEdge,
+    setVisitedEdges,
   }
 }

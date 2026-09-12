@@ -2220,11 +2220,92 @@ input[type='range']::-moz-range-thumb {
   stroke-width: 2.5;
 }
 
+/* Edge 训练视觉层级：普通边 → 走过(visited) → 活跃(active) → 目标脉冲 */
+.hw__edge.is-visited {
+  stroke: rgba(217, 164, 91, 0.38);
+  stroke-width: 2;
+}
+
+.hw__edge.is-active {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 4px rgba(217, 164, 91, 0.7));
+}
+
 /* 魔方头部：子视图切换 + 跟弹开关 */
 .chordf__wheelhead {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* 训练状态条：最近一步 / 本次计数 / 路径 */
+.chordf__path {
+  max-width: min(92vw, 720px);
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.chordf__path[hidden] {
+  display: none;
+}
+
+/* 薄弱连接面板 */
+.chordf__weak {
+  width: min(92vw, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+
+.chordf__weak[hidden] {
+  display: none;
+}
+
+.chordf__weak-empty {
+  font-size: 0.875rem;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.chordf__weak-row {
+  display: grid;
+  grid-template-columns: 9em 1fr 3.5em;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+}
+
+.chordf__weak-pair {
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+}
+
+.chordf__weak-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+
+.chordf__weak-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--danger), var(--accent));
+}
+
+.chordf__weak-pct {
+  text-align: right;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 降低动效偏好 ---------- */

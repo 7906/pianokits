@@ -13,10 +13,12 @@ import {
 } from '../../core/chords'
 import { getChordFingering, type Hand } from '../../core/fingering'
 import { ChordPracticeEngine } from '../../core/practice/chord-practice'
+import { EdgeTrainer, type TrainerState } from '../../core/practice/edge-trainer'
+import { EdgeStatsStore } from '../../core/practice/edge-stats'
 import { midiNoteName } from '../../core/midi/note-name'
 import { el } from '../../ui/dom'
 import { buildChordKeyboard, type ChordKeyboard, type ExamKeyState } from './chord-keyboard'
-import { buildFigure, randomNeighborChord } from './harmony-graph'
+import { buildFigure, chordByNode, toEdgeGraph } from './harmony-graph'
 import { buildHarmonyWheel, type WheelChord } from './harmony-wheel'
 import { midiStatusText, startMidiInput } from './midi-input'
 
@@ -227,11 +229,36 @@ export function mountChordFingering(host: HTMLElement): () => void {
     },
     '跟弹',
   )
-  const wheelHeader = el('div', { class: 'chordf__wheelhead' }, viewSeg.el, guidedToggle)
+  // 薄弱连接轻量视图：Top 5 低熟练转换（验证 Edge Mastery 是否真的工作）
+  const weakPanel = el('div', { class: 'chordf__weak', hidden: true })
+  const weakToggle = el(
+    'button',
+    {
+      class: 'chordf__chip',
+      title: '熟练度最低的 5 条连接（来自本地练习记录）',
+      onclick: () => {
+        weakPanel.hidden = !weakPanel.hidden
+        weakToggle.classList.toggle('is-active', !weakPanel.hidden)
+        if (!weakPanel.hidden) renderWeakPanel()
+      },
+    },
+    '薄弱',
+  )
+  const wheelHeader = el(
+    'div',
+    { class: 'chordf__wheelhead' },
+    viewSeg.el,
+    guidedToggle,
+    weakToggle,
+  )
+  // 训练状态条：最近一步 / 本次计数 / 路径
+  const pathBar = el('div', { class: 'chordf__path', hidden: true })
   const wheelWrap = el(
     'div',
     { class: 'chordf__wheelwrap', hidden: true },
     wheelHeader,
+    pathBar,
+    weakPanel,
     wheelFunctional.el,
     wheelVoiceleading.el,
   )
@@ -376,6 +403,15 @@ export function mountChordFingering(host: HTMLElement): () => void {
     for (const p of q.pitches) lit.set(p, { state: 'solved', alpha: 1, glow: 0.5 })
     keyboard.paint(lit)
     keyboard.setBadges(new Map(q.pitches.map((p, i) => [p, q.fingers[i]])))
+    // Edge 训练：成功入账（响应时间 = 目标出现 → 弹对），再沿图推进
+    if (state.mode === 'wheel' && wheelGuided && trainer !== null) {
+      trainer.reportResult(true, performance.now() - questionStartedAt)
+      trainerState = trainer.state()
+      renderWheel()
+      // solved 态 renderWheel 会提前返回，路径条在这里直接刷新（✓ 立即可见）
+      pathBar.hidden = false
+      pathBar.textContent = trainerStepText(trainerState)
+    }
     renderExamBar()
     nextTimer = window.setTimeout(() => next(), 900)
   })
@@ -390,14 +426,31 @@ export function mountChordFingering(host: HTMLElement): () => void {
     return isPracticing() || (state.mode === 'wheel' && wheelGuided)
   }
 
-  /** 下一题：键盘模式与魔方模式各自出题 */
+  /** 下一题：键盘模式直接换题；魔方模式先沿图推进（跳过不记结果）再出题 */
   function next(): void {
-    if (state.mode === 'wheel') askWheel()
-    else ask()
+    if (state.mode === 'wheel') {
+      if (wheelGuided && trainer !== null) {
+        trainer.advance()
+        trainerState = trainer.state()
+      }
+      askWheel()
+    } else ask()
   }
 
   function syncHeld(): void {
     engine.setHeld(new Set([...virtualHeld, ...midiHeld]))
+    // Edge 训练失败检测：本题按错过、且现在全部松开仍未成立 → 记一次失败
+    // （不打断训练：不结束计时，弹对后仍记成功；同一题失败只记一次）
+    if (state.mode === 'wheel' && wheelGuided && trainer !== null && question !== null) {
+      const st = engine.state
+      if (st.wrong.size > 0) questionHadWrong = true
+      if (questionHadWrong && !questionFailReported && !st.solved && st.held.size === 0) {
+        questionFailReported = true
+        streak = 0
+        trainer.reportResult(false)
+        trainerState = trainer.state()
+      }
+    }
     if (state.mode === 'browse') renderBrowse()
     else if (state.mode === 'wheel') renderWheel()
     else renderPractice()
@@ -416,7 +469,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     renderAll()
   }
 
-  /** 进入魔方模式：跟弹开着就接着出题，否则纯浏览 */
+  /** 进入魔方模式：跟弹开着就接着出题（trainer 保留进度），否则纯浏览 */
   function enterWheel(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
@@ -426,7 +479,10 @@ export function mountChordFingering(host: HTMLElement): () => void {
     question = null
     hintOn = false
     engine.reset()
-    if (wheelGuided) askWheel()
+    if (wheelGuided) {
+      trainerState = null
+      next()
+    }
     renderAll()
   }
 
@@ -444,38 +500,107 @@ export function mountChordFingering(host: HTMLElement): () => void {
     renderExamBar()
   }
 
-  /** 跟弹行进状态：走过的前一个节点（点亮走过的路）与上上题节点（防弹跳） */
-  let wheelPathFrom: WheelChord | null = null
-  let wheelPrevId: string | null = null
+  // —— Edge Trainer（Graph-Driven）：边 = 训练对象，边级 mastery 影响出题概率 ——
+  // 职责分离：ChordPracticeEngine 判「弹对没有」，EdgeTrainer 定「下一步去哪」，
+  // EdgeStatsStore 记「哪条连接该多练」。stats 持久化 localStorage（版本化 key）。
+  let edgeStats: EdgeStatsStore | null = null
+  let trainer: EdgeTrainer | null = null
+  let trainerView: WheelView | null = null
+  let questionStartedAt = 0
+  let questionHadWrong = false
+  let questionFailReported = false
+  let trainerState: TrainerState | null = null
 
-  const randomWheelChord = (): WheelChord => ({
-    root: FIFTHS_ORDER[Math.floor(Math.random() * FIFTHS_ORDER.length)],
-    quality: WHEEL_QUALITIES[
-      Math.floor(Math.random() * WHEEL_QUALITIES.length)
-    ] as WheelChord['quality'],
-  })
+  function getEdgeStats(): EdgeStatsStore {
+    if (edgeStats === null) {
+      let storage: Storage | null
+      try {
+        storage = window.localStorage
+      } catch {
+        storage = null // 隐私模式等：内存态运行
+      }
+      edgeStats = new EdgeStatsStore(storage)
+    }
+    return edgeStats
+  }
 
-  /** 魔方跟弹出题：首题随机；之后沿当前图的走线行进——从上一题节点走到相邻和弦节点 */
+  /** 当前子视图的 trainer（切图保留进度：目标节点若在新图中存在则延续） */
+  function getTrainer(): EdgeTrainer {
+    if (trainer === null || trainerView !== state.wheelView) {
+      const figure = buildFigure(state.wheelView)
+      const carryTarget =
+        trainer !== null && trainer.targetNodeId !== null ? trainer.targetNodeId : null
+      trainer = new EdgeTrainer(toEdgeGraph(figure), {
+        stats: getEdgeStats(),
+      })
+      trainerView = state.wheelView
+      trainerState = null
+      trainer.start(carryTarget ?? undefined)
+    }
+    return trainer
+  }
+
+  const NODE_SUFFIX: Readonly<Record<string, string>> = {
+    major: '',
+    minor: 'm',
+    dominant7: '7',
+    diminished7: '°',
+  }
+
+  /** 节点 id（`root/quality`）→ 显示符号（C / G7 / Am / B°） */
+  function nodeSymbol(nodeId: string | null): string {
+    if (nodeId === null || nodeId === '') return '?'
+    const slash = nodeId.indexOf('/')
+    const root = nodeId.slice(0, slash)
+    const quality = nodeId.slice(slash + 1)
+    return `${root}${NODE_SUFFIX[quality] ?? ''}`
+  }
+
+  /** 边 id（`A->B:type`）→ 端点节点对 */
+  function pairOfEdgeId(edgeIdStr: string): { from: string; to: string } {
+    const arrow = edgeIdStr.indexOf('->')
+    const colon = edgeIdStr.lastIndexOf(':')
+    return { from: edgeIdStr.slice(0, arrow), to: edgeIdStr.slice(arrow + 2, colon) }
+  }
+
+  /** 图节点 id（`root/quality`）→ WheelChord（id 即图拼写，无需折算） */
+  function wheelNodeFromId(nodeId: string): WheelChord | null {
+    const slash = nodeId.indexOf('/')
+    const root = nodeId.slice(0, slash)
+    const quality = nodeId.slice(slash + 1)
+    if (root === '' || quality === '') return null
+    return { root, quality } as WheelChord
+  }
+
+  function trainerStepText(tr: TrainerState): string {
+    const path = tr.recentPath
+    const last = path[path.length - 1]
+    const lastText =
+      last === undefined
+        ? '刚起步'
+        : `${nodeSymbol(last.from)} → ${nodeSymbol(last.to)} ${last.result === 'success' ? '✓' : '✗'}${
+            last.responseTimeMs !== undefined ? ` ${(last.responseTimeMs / 1000).toFixed(1)}s` : ''
+          }`
+    // 路径只显示最近 8 个节点，更长时前缀省略号
+    const nodes = [path.length > 0 ? path[0].from : tr.currentNodeId, ...path.map((p) => p.to)]
+    const shown = nodes.slice(-8)
+    return `最近一步：${lastText} · 本次 ${tr.session.steps} 步 ${tr.session.successes} 对 ${tr.session.failures} 错 · 路径${
+      nodes.length > shown.length ? '…' : ''
+    }：${shown.map((n) => nodeSymbol(n)).join(' → ')}`
+  }
+
+  /** 从 trainer 的目标节点出题（计时起点 = 目标出现） */
   function askWheel(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
       nextTimer = undefined
     }
-    const from =
-      wheelGuided && question !== null
-        ? { root: wheelRootName(question.root), quality: question.quality as WheelChord['quality'] }
-        : null
-    let chord: WheelChord
-    if (from !== null) {
-      const figure = buildFigure(state.wheelView)
-      const walked = randomNeighborChord(figure, from, wheelPrevId ?? undefined)
-      wheelPrevId = `${from.root}/${from.quality}`
-      chord = walked ?? randomWheelChord()
-    } else {
-      chord = randomWheelChord()
-      wheelPrevId = null
-    }
-    wheelPathFrom = from
+    const tr = getTrainer()
+    trainerState = tr.state()
+    const targetId = trainerState.targetNodeId
+    const chords = chordByNode(buildFigure(state.wheelView))
+    const chord = targetId !== null ? chords.get(targetId) : undefined
+    if (chord === undefined) return // 图无目标（不应发生）
     const notes = getChordNotes(chord.root, chord.quality, 0)
     question = {
       root: chord.root,
@@ -492,12 +617,15 @@ export function mountChordFingering(host: HTMLElement): () => void {
     }
     hintOn = false
     virtualHeld.clear()
+    questionStartedAt = performance.now()
+    questionHadWrong = false
+    questionFailReported = false
     engine.setQuestion(question.pitches)
     renderWheel()
     renderExamBar()
   }
 
-  /** 魔方跟弹开关：开启即出题，关闭复位判定与计数 */
+  /** 魔方跟弹开关：开启即出题，关闭复位判定与计数（trainer 保留以便续练） */
   function toggleWheelGuided(): void {
     wheelGuided = !wheelGuided
     streak = 0
@@ -512,8 +640,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
       question = null
       engine.reset()
       virtualHeld.clear()
-      wheelPathFrom = null
-      wheelPrevId = null
+      trainerState = null
     }
     renderAll()
   }
@@ -693,6 +820,46 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.setBadges(showTarget ? new Map(q.pitches.map((p, i) => [p, q.fingers[i]])) : new Map())
   }
 
+  /** 薄弱连接面板：当前图上熟练度最低的 5 条已练转换（本地记录，刷新保留） */
+  function renderWeakPanel(): void {
+    const store = getEdgeStats()
+    const graphEdges = new Set(toEdgeGraph(buildFigure(state.wheelView)).edges.map((e) => e.id))
+    const rows = store
+      .weakest(20)
+      .filter((w) => graphEdges.has(w.edgeId))
+      .slice(0, 5)
+    weakPanel.replaceChildren()
+    if (rows.length === 0) {
+      weakPanel.append(
+        el(
+          'div',
+          { class: 'chordf__weak-empty' },
+          '暂无数据：开跟弹练几步，这里会列出最该补的连接',
+        ),
+      )
+      return
+    }
+    for (const row of rows) {
+      const { from, to } = pairOfEdgeId(row.edgeId)
+      weakPanel.append(
+        el(
+          'div',
+          { class: 'chordf__weak-row' },
+          el('span', { class: 'chordf__weak-pair' }, `${nodeSymbol(from)} → ${nodeSymbol(to)}`),
+          el(
+            'span',
+            { class: 'chordf__weak-bar' },
+            el('span', {
+              class: 'chordf__weak-fill',
+              style: { width: `${Math.round(row.mastery * 100)}%` },
+            }),
+          ),
+          el('span', { class: 'chordf__weak-pct' }, `${Math.round(row.mastery * 100)}%`),
+        ),
+      )
+    }
+  }
+
   /** 魔方模式：键盘照常显示选中和弦与弹奏回显；图上高亮选中和弹奏识别的节点；
    *  跟弹开启时改为目标驱动——目标节点脉冲 + 键盘目标键位/指法，弹对自动下一题 */
   function renderWheel(): void {
@@ -726,9 +893,9 @@ export function mountChordFingering(host: HTMLElement): () => void {
         INVERSION_NAMES[q.inversion],
         HAND_NAMES[q.hand],
         `指法 ${qFingering.fingers.join('-')}`,
-        wheelPathFrom !== null
-          ? `从 ${chordSymbol(wheelPathFrom.root, wheelPathFrom.quality)} 沿走线行进`
-          : '起走：弹对后沿走线继续',
+        trainerState !== null && trainerState.activeEdgeId !== null
+          ? `沿走线 ${nodeSymbol(trainerState.currentNodeId)} → ${nodeSymbol(trainerState.targetNodeId)} 行进`
+          : '从当前位置沿走线继续',
       ]
         .filter(Boolean)
         .join(' · ')
@@ -741,16 +908,27 @@ export function mountChordFingering(host: HTMLElement): () => void {
       keyboard.paint(lit)
       keyboard.setBadges(new Map(q.pitches.map((p, i) => [p, qFingering.fingers[i]])))
       const target = { root: wheelRootName(q.root), quality: q.quality as WheelChord['quality'] }
-      // 走过的路保持可见：上一题节点琥珀 + 入射走线点亮，新目标琥珀脉冲
-      const pathFrom = wheelPathFrom
-        ? { root: wheelRootName(wheelPathFrom.root), quality: wheelPathFrom.quality }
-        : null
-      wheelFunctional.setSelected(pathFrom)
-      wheelVoiceleading.setSelected(pathFrom)
+      // 视觉层级：普通边 → 走过（visited）→ 活跃边（active）→ 目标节点脉冲；
+      // 当前节点 = 琥珀实选。路径与活跃边来自 trainer（边的两端即节点 id）
+      const tr = trainerState
+      const currentNode =
+        tr !== null && tr.currentNodeId !== '' ? wheelNodeFromId(tr.currentNodeId) : null
+      wheelFunctional.setSelected(currentNode)
+      wheelVoiceleading.setSelected(currentNode)
       wheelFunctional.setTarget(target)
       wheelVoiceleading.setTarget(target)
+      const activePair =
+        tr !== null && tr.activeEdgeId !== null ? pairOfEdgeId(tr.activeEdgeId) : null
+      wheelFunctional.setActiveEdge(activePair)
+      wheelVoiceleading.setActiveEdge(activePair)
+      const visitedPairs = (tr?.recentPath ?? []).map((p) => pairOfEdgeId(p.edgeId))
+      wheelFunctional.setVisitedEdges(visitedPairs)
+      wheelVoiceleading.setVisitedEdges(visitedPairs)
       wheelFunctional.setPlayed(playedList)
       wheelVoiceleading.setPlayed(playedList)
+      // 训练状态条：最近一步 / 本次计数 / 路径
+      pathBar.hidden = trainerState === null
+      if (trainerState !== null) pathBar.textContent = trainerStepText(trainerState)
       return
     }
 
@@ -803,6 +981,11 @@ export function mountChordFingering(host: HTMLElement): () => void {
     wheelVoiceleading.setPlayed(playedList)
     wheelFunctional.setTarget(null)
     wheelVoiceleading.setTarget(null)
+    wheelFunctional.setActiveEdge(null)
+    wheelVoiceleading.setActiveEdge(null)
+    wheelFunctional.setVisitedEdges([])
+    wheelVoiceleading.setVisitedEdges([])
+    pathBar.hidden = true
   }
 
   function renderAll(): void {
