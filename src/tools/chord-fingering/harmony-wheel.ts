@@ -264,7 +264,8 @@ export function buildHarmonyWheel(onPick: (sel: WheelChord) => void): HarmonyWhe
     }
     const i = indexOfRoot.get(sel.root) ?? 0
     // 关系线以大三所在扇区为键：小三的关系线挂在 (i−3) 扇区
-    const relRoot = sel.quality === 'major' ? sel.root : SECTORS[(i + SECTORS.length - 3) % SECTORS.length].root
+    const relRoot =
+      sel.quality === 'major' ? sel.root : SECTORS[(i + SECTORS.length - 3) % SECTORS.length].root
     relLinks.get(`${relRoot}/rel`)?.classList.add(cls)
     if (sel.quality === 'major') {
       const domRoot = SECTORS[(i + 1) % SECTORS.length].root
