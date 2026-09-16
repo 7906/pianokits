@@ -24,3 +24,11 @@ export {
   type DetectedChord,
   type DetectedQuality,
 } from './chord-detect'
+export {
+  SCALES,
+  getScale,
+  scalePitchClasses,
+  diatonicTriads,
+  type ScaleDef,
+  type DiatonicTriad,
+} from './scales'

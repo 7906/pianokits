@@ -14,13 +14,14 @@ import { buildPiano, keyGeometry, BLACK_PCS } from '../../ui/piano-keyboard'
 const BADGE_TOP_WHITE = 76 // %
 const BADGE_TOP_BLACK = 40 // %
 
-export type ExamKeyState = 'held' | 'wrong' | 'solved'
+export type ExamKeyState = 'held' | 'wrong' | 'solved' | 'dim'
 
 /** 点亮色（RGB），与全局语义色一致（琥珀 / 危险红 / 成功绿） */
 const COLORS: Readonly<Record<ExamKeyState, readonly [number, number, number]>> = {
   held: [217, 164, 91],
   wrong: [224, 105, 94],
   solved: [127, 178, 133],
+  dim: [24, 22, 20],
 }
 
 /** 逐键点亮描述：state 决定色相，alpha 控制强度（浏览态半透明、考试态全亮） */
@@ -32,8 +33,8 @@ export interface KeyPaint {
 
 export interface ChordKeyboard {
   el: HTMLElement
-  /** 显示指法徽标：pitch → 手指编号；空 Map 隐藏全部徽标 */
-  setBadges(badges: ReadonlyMap<number, number>): void
+  /** 显示键位徽标：pitch → 手指编号或文本（如 Ding）；空 Map 隐藏全部徽标 */
+  setBadges(badges: ReadonlyMap<number, number | string>): void
   /** 常规按下态（浏览模式点按反馈） */
   setPressed(pitches: readonly number[]): void
   /** 逐键点亮：Map 之外的键恢复常态 */

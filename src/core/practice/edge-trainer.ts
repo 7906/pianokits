@@ -100,6 +100,15 @@ export class EdgeTrainer {
     return this.walker
   }
 
+  /** 定向到节点但不设活跃边（进行模式回环步：无图边可记）；未知节点返回 false */
+  focusNode(nodeId: string): boolean {
+    if (!this.index.graph.nodeIds.includes(nodeId)) return false
+    this.currentNode = nodeId
+    this.activeEdge = null
+    this.reported = true
+    return true
+  }
+
   /** 定向练习：强制以指定边为当前活跃边（薄弱连接点击即练）；边不存在返回 false */
   focusEdge(edgeId: string): boolean {
     const edge = this.index.edgeById.get(edgeId)

@@ -2324,6 +2324,72 @@ input[type='range']::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
 }
 
+/* 手碟模式：调式/调内和弦面板 */
+.chordf__handpan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chordf__handpan[hidden] {
+  display: none;
+}
+
+/* 进行模式循环条 */
+.chordf__prog {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.chordf__prog[hidden] {
+  display: none;
+}
+
+.chordf__prog-key {
+  font-size: 0.8125rem;
+  color: var(--accent-hover);
+  margin-right: 2px;
+}
+
+.chordf__prog-chip {
+  min-height: 36px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.chordf__prog-chip.is-done {
+  color: var(--text-1);
+  border-color: var(--line-strong);
+}
+
+.chordf__prog-chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(217, 164, 91, 0.4);
+}
+
+.chordf__prog-count {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
 /* ---------- 降低动效偏好 ---------- */
 @media (prefers-reduced-motion: reduce) {
   *,

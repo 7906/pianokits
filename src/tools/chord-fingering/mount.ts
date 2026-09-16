@@ -11,10 +11,13 @@ import {
   type ChordQualityId,
   type NoteName,
 } from '../../core/chords'
+import { SCALES, diatonicTriads, getScale, scalePitchClasses } from '../../core/chords'
 import { getChordFingering, type Hand } from '../../core/fingering'
 import { ChordPracticeEngine } from '../../core/practice/chord-practice'
 import { EdgeTrainer, type TrainerState } from '../../core/practice/edge-trainer'
 import { EdgeStatsStore } from '../../core/practice/edge-stats'
+import { PhraseWalker } from '../../core/practice/phrase-walk'
+import { indexGraph, pickNextEdge } from '../../core/practice/edge-graph'
 import { midiNoteName } from '../../core/midi/note-name'
 import { el } from '../../ui/dom'
 import { buildChordKeyboard, type ChordKeyboard, type ExamKeyState } from './chord-keyboard'
@@ -57,7 +60,7 @@ const HAND_NAMES: Readonly<Record<Hand, string>> = { right: '右手', left: '左
 const MIN_TRANSPOSE = -11
 const MAX_TRANSPOSE = 11
 
-type ToolMode = 'browse' | 'wheel' | 'guided' | 'exam'
+type ToolMode = 'browse' | 'wheel' | 'handpan' | 'guided' | 'exam'
 /** 魔方子视图：转调图（原书图 2）/ 走线图（原书图 1） */
 type WheelView = 'functional' | 'voiceleading'
 
@@ -190,12 +193,22 @@ export function mountChordFingering(host: HTMLElement): () => void {
     },
   )
   const modeSeg = makeSeg<ToolMode>(
-    ['browse', 'wheel', 'guided', 'exam'] as const,
-    (m) => (m === 'browse' ? '浏览' : m === 'wheel' ? '魔方' : m === 'guided' ? '跟弹' : '考试'),
+    ['browse', 'wheel', 'handpan', 'guided', 'exam'] as const,
+    (m) =>
+      m === 'browse'
+        ? '浏览'
+        : m === 'wheel'
+          ? '魔方'
+          : m === 'handpan'
+            ? '手碟'
+            : m === 'guided'
+              ? '跟弹'
+              : '考试',
     (m) => {
       if (state.mode === m) return
       if (m === 'browse') exitPractice()
       else if (m === 'wheel') enterWheel()
+      else if (m === 'handpan') enterHandpan()
       else startPractice(m)
     },
   )
@@ -223,6 +236,10 @@ export function mountChordFingering(host: HTMLElement): () => void {
   // 路线按和声倾向贪心选择——resolution 优先、同权重回大三，可学习可预判）
   let wheelGuided = false
   let wheelPredict = false
+  let wheelMode: 'follow' | 'predict' | 'progress' | null = null
+  let progression: Progression | null = null
+  let handpanScaleId = 'naturalMinor' // 手碟模式默认：自然小调（最手碟的调式）
+  let handpanChord: { root: NoteName; quality: 'major' | 'minor' | 'diminished' } | null = null
   let continuousFlow = false // 连续流：弹对后跳过等待直接下一题
   let questionSettled = false // 本题已记录结果，忽略后续输入直到换题
   let predictMissSeen = false // 预测模式：按住的音已构成非目标和弦（全部松开后结算为失败）
@@ -231,7 +248,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     {
       class: 'chordf__chip',
       title: '跟弹：沿乐句语法（终止式/主音引力/节制转调）行进，弹对自动下一题',
-      onclick: () => setWheelMode(wheelGuided && !wheelPredict ? null : 'follow'),
+      onclick: () => setWheelMode(wheelMode === 'follow' ? null : 'follow'),
     },
     '跟弹',
   )
@@ -240,9 +257,18 @@ export function mountChordFingering(host: HTMLElement): () => void {
     {
       class: 'chordf__chip',
       title: '预测：只显示当前和弦，按和声倾向预判下一站并弹出',
-      onclick: () => setWheelMode(wheelPredict ? null : 'predict'),
+      onclick: () => setWheelMode(wheelMode === 'predict' ? null : 'predict'),
     },
     '预测',
+  )
+  const progressChip = el(
+    'button',
+    {
+      class: 'chordf__chip',
+      title: '进行：生成 8 和弦乐句循环，逐和弦高亮跟弹',
+      onclick: () => setWheelMode(wheelMode === 'progress' ? null : 'progress'),
+    },
+    '进行',
   )
   const flowChip = el(
     'button',
@@ -277,15 +303,19 @@ export function mountChordFingering(host: HTMLElement): () => void {
     viewSeg.el,
     followChip,
     predictChip,
+    progressChip,
     flowChip,
     weakToggle,
   )
   // 训练状态条：最近一步 / 本次计数 / 路径
   const pathBar = el('div', { class: 'chordf__path', hidden: true })
+  // 进行模式：乐句循环条（8 和弦，当前高亮）
+  const progBar = el('div', { class: 'chordf__prog', hidden: true })
   const wheelWrap = el(
     'div',
     { class: 'chordf__wheelwrap', hidden: true },
     wheelHeader,
+    progBar,
     pathBar,
     weakPanel,
     wheelFunctional.el,
@@ -332,6 +362,21 @@ export function mountChordFingering(host: HTMLElement): () => void {
     midiBtn,
     midiStatus,
   )
+
+  // —— 手碟模式 DOM：调式选择 + 调内和弦 chips ——
+  const scaleRow = el('div', {
+    class: 'chordf__row',
+    role: 'group',
+    'aria-label': '调式',
+    hidden: true,
+  })
+  const triadRow = el('div', {
+    class: 'chordf__row',
+    role: 'group',
+    'aria-label': '调内和弦',
+    hidden: true,
+  })
+  const handpanBar = el('div', { class: 'chordf__handpan', hidden: true }, scaleRow, triadRow)
 
   const headlineMain = el('div', { class: 'chordf__headline-main' })
   const headlineSub = el('div', { class: 'chordf__headline-sub' })
@@ -412,6 +457,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     feedback,
     examBar,
     wheelWrap,
+    handpanBar,
     keyboard.el,
   )
   host.append(el('div', { class: 'chordf' }, inner))
@@ -456,9 +502,14 @@ export function mountChordFingering(host: HTMLElement): () => void {
     return isPracticing() || (state.mode === 'wheel' && wheelGuided)
   }
 
-  /** 下一题：键盘模式直接换题；魔方模式先沿图推进（跳过不记结果）再出题 */
+  /** 下一题：键盘模式直接换题；魔方跟弹/预测沿图推进；进行模式步进循环 */
   function next(): void {
     if (state.mode === 'wheel') {
+      if (progression !== null) {
+        progression.index = (progression.index + 1) % progression.nodes.length
+        enterProgressionStep()
+        return
+      }
       if (wheelGuided && trainer !== null) {
         trainer.advance()
         trainerState = trainer.state()
@@ -470,6 +521,10 @@ export function mountChordFingering(host: HTMLElement): () => void {
   function syncHeld(): void {
     engine.setHeld(new Set([...virtualHeld, ...midiHeld]))
     const heldAll = [...virtualHeld, ...midiHeld]
+    if (state.mode === 'handpan') {
+      renderHandpan() // 手碟自由弹：只回显按键，无判定
+      return
+    }
     // —— 预测模式：按音级内容判定（任意排列都算），不要求与题目同八度 ——
     if (state.mode === 'wheel' && wheelPredict && question !== null && !questionSettled) {
       const targetNode = trainerState?.targetNodeId ?? null
@@ -558,7 +613,9 @@ export function mountChordFingering(host: HTMLElement): () => void {
     engine.reset()
     if (wheelGuided) {
       trainerState = null
-      next()
+      questionSettled = false
+      if (progression !== null) enterProgressionStep()
+      else next()
     }
     renderAll()
   }
@@ -726,15 +783,24 @@ export function mountChordFingering(host: HTMLElement): () => void {
   }
 
   /** 魔方练习模式开关：开启即出题，关闭复位判定与计数（trainer 保留以便续练） */
-  function setWheelMode(mode: 'follow' | 'predict' | null): void {
+  function setWheelMode(mode: 'follow' | 'predict' | 'progress' | null): void {
     wheelGuided = mode !== null
     wheelPredict = mode === 'predict'
+    wheelMode = mode
+    if (mode !== 'progress') progression = null
     streak = 0
     total = 0
     if (wheelGuided) {
-      getTrainer().setStrategy(wheelPredict ? 'greedy' : 'phrase')
-      questionSettled = false
-      askWheel()
+      const tr = getTrainer()
+      if (mode === 'progress') {
+        tr.setStrategy('random')
+        generateProgression()
+        enterProgressionStep()
+      } else {
+        tr.setStrategy(wheelPredict ? 'greedy' : 'phrase')
+        questionSettled = false
+        askWheel()
+      }
     } else {
       if (nextTimer !== undefined) {
         clearTimeout(nextTimer)
@@ -749,6 +815,80 @@ export function mountChordFingering(host: HTMLElement): () => void {
     renderAll()
   }
 
+  interface Progression {
+    nodes: string[]
+    edgeIds: (string | null)[]
+    index: number
+    keyLabel: string
+  }
+
+  /** 用乐句语法生成 8 和弦循环（尽量回主音收束），记录每步的边用于边训练 */
+  function generateProgression(): void {
+    const figure = buildFigure(state.wheelView)
+    const tonicMode: 'major' | 'minor' = Math.random() < 0.7 ? 'major' : 'minor'
+    const tonicNode = `${wheelRootName(state.root)}/${tonicMode}`
+    const edgeGraph = toEdgeGraph(figure)
+    const walker = new PhraseWalker(edgeGraph, { rng: Math.random, modulateEvery: 3 })
+    walker.setKey(tonicNode, tonicMode)
+    const nodes = [tonicNode]
+    const edgeIds: (string | null)[] = []
+    let cur = tonicNode
+    for (let i = 0; i < 7; i++) {
+      const e =
+        walker.pickNext(cur) ?? pickNextEdge(indexGraph(edgeGraph), cur, { random: Math.random })
+      if (e === null) break
+      edgeIds.push(e.id)
+      cur = e.to
+      nodes.push(cur)
+    }
+    // 尾部尽量回主音收束（乐句感），最多再走 4 步
+    let extra = 0
+    while (cur !== tonicNode && extra < 4) {
+      const e =
+        walker.pickNext(cur) ?? pickNextEdge(indexGraph(edgeGraph), cur, { random: Math.random })
+      if (e === null) break
+      edgeIds.push(e.id)
+      cur = e.to
+      nodes.push(cur)
+      extra += 1
+    }
+    progression = { nodes, edgeIds, index: 0, keyLabel: walker.keyLabel() }
+  }
+
+  /** 进行模式步进：把 trainer 对准当前步的边/节点并出题 */
+  function enterProgressionStep(): void {
+    const prog = progression
+    if (prog === null) return
+    const tr = getTrainer()
+    const edgeId = prog.edgeIds[prog.index]
+    if (edgeId !== null && edgeId !== undefined && tr.focusEdge(edgeId)) {
+      // 活跃边对准进行中的这一步
+    } else {
+      tr.focusNode(prog.nodes[prog.index])
+    }
+    trainerState = tr.state()
+    questionSettled = false
+    questionFailReported = false
+    questionHadWrong = false
+    askWheel()
+  }
+
+  /** 手碟模式：调式约束的自由弹奏环境（无题目、无判定） */
+  function enterHandpan(): void {
+    if (nextTimer !== undefined) {
+      clearTimeout(nextTimer)
+      nextTimer = undefined
+    }
+    state.mode = 'handpan'
+    question = null
+    hintOn = false
+    progression = null
+    engine.reset()
+    virtualHeld.clear()
+    examBar.hidden = true
+    renderAll()
+  }
+
   function exitPractice(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
@@ -757,6 +897,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     state.mode = 'browse'
     question = null
     hintOn = false
+    progression = null
     engine.reset()
     virtualHeld.clear()
     examBar.hidden = true
@@ -811,6 +952,11 @@ export function mountChordFingering(host: HTMLElement): () => void {
   }
 
   function renderRows(): void {
+    const handpan = state.mode === 'handpan'
+    qualityRow.hidden = handpan
+    inversionRow.hidden = handpan
+    handSeg.el.hidden = handpan
+    profileSeg.el.hidden = handpan
     const rootPc = noteNameToPc(state.root)
     rootRow.replaceChildren(
       ...ROOT_LABELS.map((n) =>
@@ -924,6 +1070,30 @@ export function mountChordFingering(host: HTMLElement): () => void {
     keyboard.setBadges(showTarget ? new Map(q.pitches.map((p, i) => [p, q.fingers[i]])) : new Map())
   }
 
+  /** 进行模式循环条：全部和弦 chips，当前步高亮 */
+  function renderProgressionBar(): void {
+    const prog = progression
+    if (prog === null) {
+      progBar.hidden = true
+      progBar.replaceChildren()
+      return
+    }
+    progBar.hidden = false
+    progBar.replaceChildren(
+      el('span', { class: 'chordf__prog-key' }, prog.keyLabel),
+      ...prog.nodes.map((n, i) =>
+        el(
+          'span',
+          {
+            class: `chordf__prog-chip${i === prog.index ? ' is-active' : i < prog.index ? ' is-done' : ''}`,
+          },
+          nodeSymbol(n),
+        ),
+      ),
+      el('span', { class: 'chordf__prog-count' }, `${prog.index + 1}/${prog.nodes.length}`),
+    )
+  }
+
   /** 薄弱连接面板：当前图上熟练度最低的 5 条已练转换（本地记录，刷新保留） */
   function renderWeakPanel(): void {
     const store = getEdgeStats()
@@ -1034,13 +1204,14 @@ export function mountChordFingering(host: HTMLElement): () => void {
         INVERSION_NAMES[q.inversion],
         HAND_NAMES[q.hand],
         `指法 ${qFingering.fingers.join('-')}`,
-        trainer !== null ? (trainer.keyLabel() ?? '') : '',
+        trainer !== null && wheelMode === 'follow' ? (trainer.keyLabel() ?? '') : '',
         trainerState !== null && trainerState.activeEdgeId !== null
           ? `沿走线 ${nodeSymbol(trainerState.currentNodeId)} → ${nodeSymbol(trainerState.targetNodeId)} 行进`
           : '从当前位置沿走线继续',
       ]
         .filter(Boolean)
         .join(' · ')
+      renderProgressionBar()
       const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
       for (const p of q.pitches) {
         if (!st.held.has(p)) lit.set(p, { state: 'held', alpha: 0.35, glow: 0 })
@@ -1128,6 +1299,85 @@ export function mountChordFingering(host: HTMLElement): () => void {
     wheelFunctional.setVisitedEdges([])
     wheelVoiceleading.setVisitedEdges([])
     pathBar.hidden = true
+    if (wheelGuided) renderProgressionBar()
+    else progBar.hidden = true
+  }
+
+  /** 手碟模式渲染：调外键变暗、调内键可用、Ding 徽标、调内和弦高亮、按住回显 */
+  function renderHandpan(): void {
+    const scale = getScale(handpanScaleId)
+    const tonicPc = noteNameToPc(state.root)
+    const pcs = scalePitchClasses(tonicPc, scale)
+    const ding = 48 + tonicPc // 小字组 C3 区：Ding 建议键位
+    const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+    for (let p = 21; p <= 108; p++) {
+      if (!pcs.has(((p % 12) + 12) % 12)) lit.set(p, { state: 'dim', alpha: 0.88, glow: 0 })
+    }
+    lit.set(ding, { state: 'held', alpha: 0.55, glow: 0.2 })
+    if (handpanChord !== null) {
+      for (const p of getChordNotes(handpanChord.root, handpanChord.quality, 0).pitches) {
+        lit.set(p, { state: 'held', alpha: 0.85, glow: 0.25 })
+      }
+    }
+    for (const p of [...virtualHeld, ...midiHeld]) {
+      lit.set(p, { state: 'held', alpha: 1, glow: 0.3 })
+    }
+    keyboard.paint(lit)
+    keyboard.setBadges(new Map([[ding, 'Ding']]))
+    keyboard.setPressed([])
+
+    headlineMain.textContent = `${state.root} ${scale.label} · 手碟`
+    headlineSub.textContent = [
+      '暗键已按调式禁用，亮键随便弹（MIDI 同样生效）',
+      '「Ding」= 建议左手低音',
+      handpanChord !== null
+        ? `高亮：${handpanChord.root}${handpanChord.quality === 'major' ? '' : handpanChord.quality === 'minor' ? 'm' : 'dim'}`
+        : '点下方调内和弦可在键盘上高亮',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  /** 手碟调内和弦行（随调式/主音重算；点击在键盘上高亮该三和弦） */
+  function renderHandpanTriads(): void {
+    const scale = getScale(handpanScaleId)
+    const triads = diatonicTriads(noteNameToPc(state.root), scale)
+    triadRow.replaceChildren(
+      el('span', { class: 'chordf__grouplabel' }, '调内和弦'),
+      ...triads.map((t) =>
+        chip(
+          t.symbol,
+          handpanChord !== null &&
+            handpanChord.root === t.root &&
+            handpanChord.quality === t.quality,
+          () => {
+            handpanChord =
+              handpanChord !== null &&
+              handpanChord.root === t.root &&
+              handpanChord.quality === t.quality
+                ? null
+                : { root: t.root, quality: t.quality as 'major' | 'minor' | 'diminished' }
+            renderHandpanTriads()
+            renderHandpan()
+          },
+        ),
+      ),
+    )
+  }
+
+  /** 手碟调式行 */
+  function renderScaleRow(): void {
+    scaleRow.replaceChildren(
+      el('span', { class: 'chordf__grouplabel' }, '调式'),
+      ...SCALES.map((s) =>
+        chip(handpanScaleId === s.id ? s.label : s.label, handpanScaleId === s.id, () => {
+          handpanScaleId = s.id
+          handpanChord = null
+          renderHandpanTriads()
+          renderHandpan()
+        }),
+      ),
+    )
   }
 
   function renderAll(): void {
@@ -1136,13 +1386,27 @@ export function mountChordFingering(host: HTMLElement): () => void {
     wheelFunctional.el.hidden = state.wheelView !== 'functional'
     wheelVoiceleading.el.hidden = state.wheelView !== 'voiceleading'
     viewSeg.set(state.wheelView)
-    followChip.classList.toggle('is-active', wheelGuided && !wheelPredict)
-    predictChip.classList.toggle('is-active', wheelPredict)
+    followChip.classList.toggle('is-active', wheelMode === 'follow')
+    predictChip.classList.toggle('is-active', wheelMode === 'predict')
+    progressChip.classList.toggle('is-active', wheelMode === 'progress')
     examBar.hidden = state.mode === 'browse' || (state.mode === 'wheel' && !wheelGuided)
     exitBtn.hidden = state.mode === 'wheel'
     hintBtn.hidden = state.mode !== 'exam'
+    // 手碟：调式/和弦行 + 面板显隐
+    handpanBar.hidden = state.mode !== 'handpan'
+    rootRow.hidden = false
+    if (state.mode === 'handpan') {
+      renderScaleRow()
+      renderHandpanTriads()
+      renderHandpan()
+    } else {
+      scaleRow.replaceChildren()
+      triadRow.replaceChildren()
+    }
     if (state.mode === 'browse') renderBrowse()
     else if (state.mode === 'wheel') renderWheel()
+    else if (state.mode === 'handpan')
+      return // renderHandpan 已画
     else renderPractice()
   }
 
