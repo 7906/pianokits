@@ -230,7 +230,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     'button',
     {
       class: 'chordf__chip',
-      title: '跟弹：目标和弦节点高亮，在琴上弹对自动下一题',
+      title: '跟弹：沿乐句语法（终止式/主音引力/节制转调）行进，弹对自动下一题',
       onclick: () => setWheelMode(wheelGuided && !wheelPredict ? null : 'follow'),
     },
     '跟弹',
@@ -609,7 +609,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
         trainer !== null && trainer.targetNodeId !== null ? trainer.targetNodeId : null
       trainer = new EdgeTrainer(toEdgeGraph(figure), {
         stats: getEdgeStats(),
-        strategy: wheelPredict ? 'greedy' : 'random',
+        strategy: wheelPredict ? 'greedy' : 'phrase',
       })
       trainerView = state.wheelView
       trainerState = null
@@ -732,7 +732,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     streak = 0
     total = 0
     if (wheelGuided) {
-      getTrainer().setStrategy(wheelPredict ? 'greedy' : 'random')
+      getTrainer().setStrategy(wheelPredict ? 'greedy' : 'phrase')
       questionSettled = false
       askWheel()
     } else {
@@ -1034,6 +1034,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
         INVERSION_NAMES[q.inversion],
         HAND_NAMES[q.hand],
         `指法 ${qFingering.fingers.join('-')}`,
+        trainer !== null ? (trainer.keyLabel() ?? '') : '',
         trainerState !== null && trainerState.activeEdgeId !== null
           ? `沿走线 ${nodeSymbol(trainerState.currentNodeId)} → ${nodeSymbol(trainerState.targetNodeId)} 行进`
           : '从当前位置沿走线继续',

@@ -18,6 +18,7 @@ import {
   type GraphEdge,
 } from './edge-graph'
 import type { EdgeStatsStore } from './edge-stats'
+import { PhraseWalker } from './phrase-walk'
 
 /** 路径上的一步：一条被作答过的有向边 */
 export interface TrainerPathStep {
@@ -49,14 +50,14 @@ export interface TrainerState {
 
 export const MAX_PATH_LENGTH = 50
 
-export type TrainerStrategy = 'random' | 'greedy'
+export type TrainerStrategy = 'random' | 'greedy' | 'phrase'
 
 export interface EdgeTrainerOptions {
   /** 边级统计存储：采样权重读 mastery，作答结果写入此处 */
   stats?: EdgeStatsStore
   /** 随机源（可注入做确定性测试） */
   random?: () => number
-  /** 选边策略：random = 加权随机（Mode A 跟弹）；greedy = 最高权重确定路线（Mode B 预测，可学习） */
+  /** 选边策略：phrase = 乐句语法（跟弹，好听）；greedy = 确定倾向路线（预测，可学习）；random = 加权随机 */
   strategy?: TrainerStrategy
 }
 
@@ -65,6 +66,7 @@ export class EdgeTrainer {
   private readonly stats: EdgeStatsStore | null
   private readonly random: () => number
   private strategy: TrainerStrategy
+  private walker: PhraseWalker | null = null
   private currentNode: string | null = null
   private activeEdge: GraphEdge | null = null
   private path: TrainerPathStep[] = []
@@ -82,6 +84,20 @@ export class EdgeTrainer {
   /** 切换选边策略（跟弹↔预测）；不清空路径与统计 */
   setStrategy(strategy: TrainerStrategy): void {
     this.strategy = strategy
+    this.walker = null // 惰性重建（phrase 策略首次 advance 时创建）
+  }
+
+  /** 当前调性标签（phrase 策略才有），如「C 大调」 */
+  keyLabel(): string | null {
+    if (this.strategy !== 'phrase') return null
+    return this.ensureWalker().keyLabel()
+  }
+
+  private ensureWalker(): PhraseWalker {
+    if (this.walker === null) {
+      this.walker = new PhraseWalker(this.index.graph, { rng: this.random })
+    }
+    return this.walker
   }
 
   /** 定向练习：强制以指定边为当前活跃边（薄弱连接点击即练）；边不存在返回 false */
@@ -114,6 +130,11 @@ export class EdgeTrainer {
         : this.randomNode()
     this.currentNode = valid
     this.activeEdge = null
+    // 乐句策略：起点是主和弦节点时把调性同步过去（首步即有语法）
+    if (this.strategy === 'phrase' && valid !== null) {
+      const q = valid.slice(valid.indexOf('/') + 1)
+      if (q === 'major' || q === 'minor') this.ensureWalker().setKey(valid, q)
+    }
     this.advance()
   }
 
@@ -128,12 +149,16 @@ export class EdgeTrainer {
     let from = this.activeEdge?.to ?? this.currentNode
     const avoid = this.activeEdge?.from
     const masteryOf = (id: string): number => this.stats?.mastery(id) ?? 0.5
-    let edge = pickNextEdge(this.index, from, {
-      avoidNodeId: avoid,
-      masteryOf,
-      random: this.random,
-      greedy: this.strategy === 'greedy',
-    })
+    // 乐句策略：调性语法选边（好听优先，不受 mastery 影响）；无语法建议时回退加权随机
+    let edge = this.strategy === 'phrase' ? this.ensureWalker().pickNext(from) : null
+    if (edge === null) {
+      edge = pickNextEdge(this.index, from, {
+        avoidNodeId: avoid,
+        masteryOf,
+        random: this.random,
+        greedy: this.strategy === 'greedy',
+      })
+    }
     if (edge === null) {
       // 死端（如走线图的 ii 小三只有视觉锚点连线）：跳到随机其他节点再试一次
       const jump = this.randomNode(this.currentNode)
