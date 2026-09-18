@@ -21,9 +21,23 @@ function walk(w: PhraseWalker, start: string, n: number): { edges: string[]; nod
   return { edges, nodes }
 }
 
+/**
+ * 确定性随机源（mulberry32）：统计断言（如主音引力频次）对 Math.random 有
+ * 偶发失败率，统一注入种子使测试可复现。
+ */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
 describe('PhraseWalker：乐句语法（转调图）', () => {
   it('每一步都是图上真实存在的边（300 步参数化扫描）', () => {
-    const w = new PhraseWalker(graph, { rng: Math.random })
+    const w = new PhraseWalker(graph, { rng: mulberry32(20260918) })
     let cur = 'C/major'
     for (let i = 0; i < 300; i++) {
       const e = w.pickNext(cur)
@@ -35,7 +49,7 @@ describe('PhraseWalker：乐句语法（转调图）', () => {
 
   it('终止式：落在调内属七（G7）下一步必回 C 大/小主和弦', () => {
     for (let trial = 0; trial < 50; trial++) {
-      const w = new PhraseWalker(graph, { rng: Math.random })
+      const w = new PhraseWalker(graph, { rng: mulberry32(20260919) })
       const e = w.pickNext('G/dominant7')
       expect(e).not.toBeNull()
       expect(['C/major', 'C/minor']).toContain(e!.to)
@@ -44,7 +58,7 @@ describe('PhraseWalker：乐句语法（转调图）', () => {
 
   it('主音引力：从主和弦出发只去属七 / 关系小调 / 减七枢纽', () => {
     for (let trial = 0; trial < 50; trial++) {
-      const w = new PhraseWalker(graph, { rng: Math.random })
+      const w = new PhraseWalker(graph, { rng: mulberry32(20260920) })
       const e = w.pickNext('C/major')
       expect(e).not.toBeNull()
       expect(e!.from).toBe('C/major')
@@ -54,7 +68,7 @@ describe('PhraseWalker：乐句语法（转调图）', () => {
   })
 
   it('调性锚定：长行走中主和弦出现频率远高于其它单个节点', () => {
-    const w = new PhraseWalker(graph, { rng: Math.random })
+    const w = new PhraseWalker(graph, { rng: mulberry32(20260921) })
     const { nodes } = walk(w, 'C/major', 300)
     const freq = new Map<string, number>()
     for (const n of nodes) freq.set(n, (freq.get(n) ?? 0) + 1)
@@ -73,7 +87,7 @@ describe('PhraseWalker：乐句语法（转调图）', () => {
   })
 
   it('转调节制：任 12 步窗口内 modulation ≤ 3 次，且减七枢纽不停留', () => {
-    const w = new PhraseWalker(graph, { rng: Math.random })
+    const w = new PhraseWalker(graph, { rng: mulberry32(20260922) })
     const { edges } = walk(w, 'C/major', 200)
     const types = edges.map((id) => id.slice(id.lastIndexOf(':') + 1))
     for (let i = 0; i + 12 <= types.length; i += 1) {
@@ -82,7 +96,7 @@ describe('PhraseWalker：乐句语法（转调图）', () => {
     }
     // 不在减七停留：modulation 进入后下一步必离开（序列里不出现连续两步同一节点）
     // （由通用「节点轨迹无重复相邻」覆盖）
-    const { nodes } = walk(new PhraseWalker(graph, { rng: Math.random }), 'C/major', 100)
+    const { nodes } = walk(new PhraseWalker(graph, { rng: mulberry32(20260923) }), 'C/major', 100)
     for (let i = 1; i < nodes.length; i++) {
       expect(nodes[i]).not.toBe(nodes[i - 1])
     }
@@ -115,7 +129,7 @@ describe('PhraseWalker：乐句语法（转调图）', () => {
 
   it('走线图同样可用（ii-V-I 环线行进）', () => {
     const vl = toEdgeGraph(buildFigure('voiceleading'))
-    const w = new PhraseWalker(vl, { rng: Math.random })
+    const w = new PhraseWalker(vl, { rng: mulberry32(20260924) })
     let cur = 'C/major'
     for (let i = 0; i < 60; i++) {
       const e = w.pickNext(cur)

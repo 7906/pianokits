@@ -17,11 +17,15 @@ export {
 } from './parse'
 export { BASE_ROOT_PITCH, getChordNotes, type ChordNotes } from './notes'
 export {
+  DETECT_FULL_QUALITIES,
   DETECT_QUALITIES,
   FIFTHS_ORDER,
   detectChord,
+  detectChordFull,
   detectDim7Roots,
+  type DetectFullResult,
   type DetectedChord,
+  type DetectedChordFull,
   type DetectedQuality,
 } from './chord-detect'
 export {

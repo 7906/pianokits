@@ -2,6 +2,7 @@ import {
   CHORD_QUALITIES,
   FIFTHS_ORDER,
   detectChord,
+  detectChordFull,
   detectDim7Roots,
   getChordNotes,
   getChordQuality,
@@ -9,6 +10,7 @@ import {
   ChordParseError,
   noteNameToPc,
   type ChordQualityId,
+  type DetectedChordFull,
   type NoteName,
 } from '../../core/chords'
 import { SCALES, diatonicTriads, getScale, scalePitchClasses } from '../../core/chords'
@@ -27,8 +29,10 @@ import { midiStatusText, startMidiInput } from './midi-input'
 
 /**
  * 「和弦指法」工具页（规格 §9 MVP + 跟弹练习 + 和弦魔方）：
- * 四种模式——
+ * 五种模式——
  * - 浏览：任选和弦查看指法；屏幕键盘可点按试听，联琴后弹的键实时点亮；
+ * - 识别：自由弹奏（MIDI / 屏幕键盘），detectChordFull 实时大字显示所弹和弦
+ *   （符号 / 质量 / 转位 / 同音集别解），松开保留显示，历史可点回浏览；
  * - 魔方：和声轮视图——五度圈 12 扇区 × 大三/属七/小三三层节点，点节点切换和弦，
  *   弹琴（MIDI / 屏幕键盘）经 detectChord 实时点亮所弹和弦的节点，属七→主、
  *   关系大小调走线随选中/弹奏点亮（源自《Illustrated Harmony》的图形化思路）；
@@ -54,13 +58,15 @@ const QUALITY_LABELS: Readonly<Record<ChordQualityId, string>> = {
   minor7: '小七',
   halfDiminished7: '半减七',
   diminished7: '减七',
+  major6: '大六',
+  minor6: '小六',
 }
 const INVERSION_NAMES = ['原位', '第一转位', '第二转位', '第三转位'] as const
 const HAND_NAMES: Readonly<Record<Hand, string>> = { right: '右手', left: '左手' }
 const MIN_TRANSPOSE = -11
 const MAX_TRANSPOSE = 11
 
-type ToolMode = 'browse' | 'wheel' | 'handpan' | 'guided' | 'exam'
+type ToolMode = 'browse' | 'identify' | 'wheel' | 'handpan' | 'guided' | 'exam'
 /** 魔方子视图：转调图（原书图 2）/ 走线图（原书图 1） */
 type WheelView = 'functional' | 'voiceleading'
 
@@ -140,7 +146,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
   const searchInput = el('input', {
     class: 'chordf__search',
     type: 'text',
-    placeholder: '输入和弦，如 Cm7b5 / Bbmaj7 / F#m7b5',
+    placeholder: '输入和弦，如 Cm7b5 / C6 / Bbmaj7 / F#m7b5',
     autocomplete: 'off',
     autocapitalize: 'off',
     spellcheck: 'false',
@@ -154,12 +160,12 @@ export function mountChordFingering(host: HTMLElement): () => void {
       state.quality = parsed.quality
       state.inversion = 0
       setFeedback(null)
-      if (isPracticing()) exitPractice()
+      if (isPracticing() || state.mode === 'identify') exitPractice()
       renderAll()
     } catch (e) {
       if (e instanceof ChordParseError) {
         setFeedback(
-          `无法识别 ${JSON.stringify(e.symbol)}：支持 C / Cm / C7 / Cmaj7 / Cm7b5 / Csus2 等`,
+          `无法识别 ${JSON.stringify(e.symbol)}：支持 C / Cm / C6 / Cm6 / C7 / Cmaj7 / Cm7b5 / Csus2 等`,
         )
       }
     }
@@ -193,20 +199,23 @@ export function mountChordFingering(host: HTMLElement): () => void {
     },
   )
   const modeSeg = makeSeg<ToolMode>(
-    ['browse', 'wheel', 'handpan', 'guided', 'exam'] as const,
+    ['browse', 'identify', 'wheel', 'handpan', 'guided', 'exam'] as const,
     (m) =>
       m === 'browse'
         ? '浏览'
-        : m === 'wheel'
-          ? '魔方'
-          : m === 'handpan'
-            ? '手碟'
-            : m === 'guided'
-              ? '跟弹'
-              : '考试',
+        : m === 'identify'
+          ? '识别'
+          : m === 'wheel'
+            ? '魔方'
+            : m === 'handpan'
+              ? '手碟'
+              : m === 'guided'
+                ? '跟弹'
+                : '考试',
     (m) => {
       if (state.mode === m) return
       if (m === 'browse') exitPractice()
+      else if (m === 'identify') enterIdentify()
       else if (m === 'wheel') enterWheel()
       else if (m === 'handpan') enterHandpan()
       else startPractice(m)
@@ -240,6 +249,13 @@ export function mountChordFingering(host: HTMLElement): () => void {
   let progression: Progression | null = null
   let handpanScaleId = 'naturalMinor' // 手碟模式默认：自然小调（最手碟的调式）
   let handpanChord: { root: NoteName; quality: 'major' | 'minor' | 'diminished' } | null = null
+  // 识别模式：最近识别的和弦（最新在前，去重，cap 8）；lastIdentified = 松开后保留展示
+  let identifyHistory: DetectedChordFull[] = []
+  let lastIdentified: DetectedChordFull | null = null
+  let identifyHeldCount = 0
+  // 本次按压手势（held 从 0 增加、回到 0 结束）内已记录过和弦：再次出现新和弦
+  // （Am → Am7 的按键演进）替换历史头部而非新增，避免逐键中间态刷屏
+  let identifyGestureRecorded = false
   let continuousFlow = false // 连续流：弹对后跳过等待直接下一题
   let questionSettled = false // 本题已记录结果，忽略后续输入直到换题
   let predictMissSeen = false // 预测模式：按住的音已构成非目标和弦（全部松开后结算为失败）
@@ -378,6 +394,9 @@ export function mountChordFingering(host: HTMLElement): () => void {
   })
   const handpanBar = el('div', { class: 'chordf__handpan', hidden: true }, scaleRow, triadRow)
 
+  // —— 识别模式 DOM：识别历史（点 chip 跳浏览该和弦的指法） ——
+  const identifyBar = el('div', { class: 'chordf__identify', hidden: true })
+
   const headlineMain = el('div', { class: 'chordf__headline-main' })
   const headlineSub = el('div', { class: 'chordf__headline-sub' })
   const headline = el('div', { class: 'chordf__headline' }, headlineMain, headlineSub)
@@ -458,6 +477,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     examBar,
     wheelWrap,
     handpanBar,
+    identifyBar,
     keyboard.el,
   )
   host.append(el('div', { class: 'chordf' }, inner))
@@ -585,6 +605,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     }
     if (state.mode === 'browse') renderBrowse()
     else if (state.mode === 'wheel') renderWheel()
+    else if (state.mode === 'identify') renderIdentify()
     else renderPractice()
   }
 
@@ -889,6 +910,27 @@ export function mountChordFingering(host: HTMLElement): () => void {
     renderAll()
   }
 
+  /** 识别模式：自由弹奏实时显示和弦名（无题目、无判定），历史保留最近识别 */
+  function enterIdentify(): void {
+    if (nextTimer !== undefined) {
+      clearTimeout(nextTimer)
+      nextTimer = undefined
+    }
+    state.mode = 'identify'
+    question = null
+    hintOn = false
+    progression = null
+    engine.reset()
+    virtualHeld.clear()
+    identifyHistory = []
+    lastIdentified = null
+    identifyHeldCount = 0
+    identifyGestureRecorded = false
+    renderIdentifyHistory()
+    examBar.hidden = true
+    renderAll()
+  }
+
   function exitPractice(): void {
     if (nextTimer !== undefined) {
       clearTimeout(nextTimer)
@@ -953,10 +995,13 @@ export function mountChordFingering(host: HTMLElement): () => void {
 
   function renderRows(): void {
     const handpan = state.mode === 'handpan'
-    qualityRow.hidden = handpan
-    inversionRow.hidden = handpan
-    handSeg.el.hidden = handpan
-    profileSeg.el.hidden = handpan
+    // 识别模式按弹奏内容判定，根音/类型/转位/手别选择行无意义，一并隐藏
+    const identify = state.mode === 'identify'
+    qualityRow.hidden = handpan || identify
+    inversionRow.hidden = handpan || identify
+    handSeg.el.hidden = handpan || identify
+    profileSeg.el.hidden = handpan || identify
+    rootRow.hidden = identify
     const rootPc = noteNameToPc(state.root)
     rootRow.replaceChildren(
       ...ROOT_LABELS.map((n) =>
@@ -1338,6 +1383,79 @@ export function mountChordFingering(host: HTMLElement): () => void {
       .join(' · ')
   }
 
+  /** 识别模式渲染：按住的音 → detectChordFull 大字显示；松开保留最后一个识别结果。
+   *  历史以「按压手势」为单位：一次按下手势（held 回到 0 前的演进）只记最终
+   *  和弦——逐键按 Am7 路过 Am、逐键松开路过中间态，都不算单独的演奏意图。 */
+  function renderIdentify(): void {
+    const held = [...virtualHeld, ...midiHeld]
+    const result = held.length >= 3 ? detectChordFull(held) : null
+    const c = result !== null ? result.chord : lastIdentified
+    if (held.length === 0) identifyGestureRecorded = false
+    const pressedNew = held.length > identifyHeldCount
+    identifyHeldCount = held.length
+    if (result !== null) {
+      const cur = result.chord
+      const headDiffers =
+        identifyHistory[0]?.root !== cur.root || identifyHistory[0]?.quality !== cur.quality
+      if (pressedNew && headDiffers) {
+        if (identifyGestureRecorded) {
+          // 同一手势内的和弦演进：替换头部（Am → Am7）
+          identifyHistory = [cur, ...identifyHistory.slice(1)]
+        } else {
+          identifyHistory = [
+            cur,
+            ...identifyHistory.filter((h) => !(h.root === cur.root && h.quality === cur.quality)),
+          ].slice(0, 8)
+        }
+        identifyGestureRecorded = true
+        renderIdentifyHistory()
+      }
+      lastIdentified = cur
+    }
+    const heldSet = new Set(held)
+    const lit = new Map<number, { state: ExamKeyState; alpha: number; glow: number }>()
+    for (const p of heldSet) lit.set(p, { state: 'held', alpha: 1, glow: 0.3 })
+    keyboard.paint(lit)
+    keyboard.setBadges(new Map())
+
+    headlineMain.textContent = c === null ? '—' : c.symbol
+    headlineSub.textContent =
+      c === null
+        ? '按住 3–4 个音（MIDI / 屏幕键盘），实时识别和弦 · 松开保留显示'
+        : [
+            QUALITY_LABELS[c.quality],
+            INVERSION_NAMES[c.inversion],
+            result !== null && result.alternates.length > 0
+              ? `同音集 ${result.alternates.map((a) => a.symbol).join(' / ')}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+  }
+
+  /** 识别历史行：最近识别的和弦 chips（点击跳浏览该和弦指法） */
+  function renderIdentifyHistory(): void {
+    identifyBar.replaceChildren(
+      el('span', { class: 'chordf__grouplabel' }, '识别历史'),
+      ...identifyHistory.map((h) =>
+        el(
+          'button',
+          {
+            class: 'chordf__chip',
+            title: '查看这个和弦的指法（跳到浏览）',
+            onclick: () => {
+              state.root = h.root
+              state.quality = h.quality
+              state.inversion = 0
+              exitPractice()
+            },
+          },
+          h.symbol,
+        ),
+      ),
+    )
+  }
+
   /** 手碟调内和弦行（随调式/主音重算；点击在键盘上高亮该三和弦） */
   function renderHandpanTriads(): void {
     const scale = getScale(handpanScaleId)
@@ -1389,12 +1507,16 @@ export function mountChordFingering(host: HTMLElement): () => void {
     followChip.classList.toggle('is-active', wheelMode === 'follow')
     predictChip.classList.toggle('is-active', wheelMode === 'predict')
     progressChip.classList.toggle('is-active', wheelMode === 'progress')
-    examBar.hidden = state.mode === 'browse' || (state.mode === 'wheel' && !wheelGuided)
+    examBar.hidden =
+      state.mode === 'browse' ||
+      state.mode === 'identify' ||
+      (state.mode === 'wheel' && !wheelGuided)
     exitBtn.hidden = state.mode === 'wheel'
     hintBtn.hidden = state.mode !== 'exam'
     // 手碟：调式/和弦行 + 面板显隐
     handpanBar.hidden = state.mode !== 'handpan'
-    rootRow.hidden = false
+    identifyBar.hidden = state.mode !== 'identify'
+    rootRow.hidden = state.mode === 'identify'
     if (state.mode === 'handpan') {
       renderScaleRow()
       renderHandpanTriads()
@@ -1405,6 +1527,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     }
     if (state.mode === 'browse') renderBrowse()
     else if (state.mode === 'wheel') renderWheel()
+    else if (state.mode === 'identify') renderIdentify()
     else if (state.mode === 'handpan')
       return // renderHandpan 已画
     else renderPractice()

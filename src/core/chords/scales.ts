@@ -71,6 +71,9 @@ const TRIAD_SUFFIX: Readonly<Record<ChordQualityId, string>> = {
   minor7: 'm7',
   halfDiminished7: 'm7b5',
   diminished7: '°7',
+  // 调内三和弦只产生上表质量，六和弦后缀仅为满足穷举（不会被用到）
+  major6: '6',
+  minor6: 'm6',
 }
 
 /**

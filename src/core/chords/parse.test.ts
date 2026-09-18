@@ -17,6 +17,10 @@ describe('parseChordSymbol', () => {
     expect(parseChordSymbol('Cm7b5')).toEqual({ root: 'C', quality: 'halfDiminished7' })
     expect(parseChordSymbol('F#m7b5')).toEqual({ root: 'F#', quality: 'halfDiminished7' })
     expect(parseChordSymbol('Bbmaj7')).toEqual({ root: 'Bb', quality: 'major7' })
+    expect(parseChordSymbol('C6')).toEqual({ root: 'C', quality: 'major6' })
+    expect(parseChordSymbol('Cm6')).toEqual({ root: 'C', quality: 'minor6' })
+    expect(parseChordSymbol('F6')).toEqual({ root: 'F', quality: 'major6' })
+    expect(parseChordSymbol('Am6')).toEqual({ root: 'A', quality: 'minor6' })
   })
 
   it('升降号根音（# / b / ♯ / ♭）', () => {
@@ -31,12 +35,14 @@ describe('parseChordSymbol', () => {
     expect(parseChordSymbol('  G7  ')).toEqual({ root: 'G', quality: 'dominant7' })
   })
 
-  it('别名符号（min / - / ° / M7 / sus / min7）', () => {
+  it('别名符号（min / - / ° / M7 / sus / min6 / min7b5）', () => {
     expect(parseChordSymbol('Cmin')).toEqual({ root: 'C', quality: 'minor' })
     expect(parseChordSymbol('C-7')).toEqual({ root: 'C', quality: 'minor7' })
     expect(parseChordSymbol('C°')).toEqual({ root: 'C', quality: 'diminished' })
     expect(parseChordSymbol('CM7')).toEqual({ root: 'C', quality: 'major7' })
     expect(parseChordSymbol('Csus')).toEqual({ root: 'C', quality: 'sus4' })
+    expect(parseChordSymbol('Cmin6')).toEqual({ root: 'C', quality: 'minor6' })
+    expect(parseChordSymbol('C-6')).toEqual({ root: 'C', quality: 'minor6' })
     expect(parseChordSymbol('Cmin7b5')).toEqual({ root: 'C', quality: 'halfDiminished7' })
   })
 

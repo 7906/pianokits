@@ -2,8 +2,8 @@
  * 和弦质量（ChordQuality）定义：数据驱动，禁止在 UI 中硬编码音程。
  *
  * 每个质量包含：稳定 id、显示符号、相对根音的半音程、音级名、音符数、类别与
- * 支持的转位数。第一版覆盖 6 种三和弦（含挂留）与 4 种七和弦；六和弦等作为
- * 第二阶段扩展——新增和弦只需在本表加一条数据，解析 / 音符 / 指法自动获得支持。
+ * 支持的转位数。覆盖 6 种三和弦（含挂留）、4 种七和弦与 2 种六和弦；新增和弦
+ * 只需在本表加一条数据，解析 / 音符 / 指法自动获得支持。
  */
 
 export type ChordQualityId =
@@ -18,6 +18,8 @@ export type ChordQualityId =
   | 'minor7'
   | 'halfDiminished7'
   | 'diminished7'
+  | 'major6'
+  | 'minor6'
 
 /** 和弦类别：决定使用三和弦还是七和弦指法规则表 */
 export type ChordCategory = 'triad' | 'seventh'
@@ -57,8 +59,8 @@ function triad(
   }
 }
 
-/** 七和弦（4 音，3 个转位）的通用构造 */
-function seventh(
+/** 四音和弦（七和弦 / 六和弦，4 音 3 转位）的通用构造 */
+function tetrad(
   id: ChordQualityId,
   symbols: string[],
   intervals: number[],
@@ -75,7 +77,7 @@ function seventh(
   }
 }
 
-/** 第一版支持的全部和弦质量（规格 §2） */
+/** 全部支持的和弦质量（规格 §2 + 六和弦扩展） */
 export const CHORD_QUALITIES: readonly ChordQuality[] = [
   triad('major', ['', 'maj'], [0, 4, 7], ['1', '3', '5']),
   triad('minor', ['m', 'min', '-'], [0, 3, 7], ['1', 'b3', '5']),
@@ -83,16 +85,21 @@ export const CHORD_QUALITIES: readonly ChordQuality[] = [
   triad('augmented', ['aug', '+'], [0, 4, 8], ['1', '3', '#5']),
   triad('sus2', ['sus2'], [0, 2, 7], ['1', '2', '5']),
   triad('sus4', ['sus4', 'sus'], [0, 5, 7], ['1', '4', '5']),
-  seventh('dominant7', ['7'], [0, 4, 7, 10], ['1', '3', '5', 'b7']),
-  seventh('major7', ['maj7', 'M7', 'Δ7'], [0, 4, 7, 11], ['1', '3', '5', '7']),
-  seventh('minor7', ['m7', 'min7', '-7'], [0, 3, 7, 10], ['1', 'b3', '5', 'b7']),
-  seventh(
+  tetrad('dominant7', ['7'], [0, 4, 7, 10], ['1', '3', '5', 'b7']),
+  tetrad('major7', ['maj7', 'M7', 'Δ7'], [0, 4, 7, 11], ['1', '3', '5', '7']),
+  tetrad('minor7', ['m7', 'min7', '-7'], [0, 3, 7, 10], ['1', 'b3', '5', 'b7']),
+  tetrad(
     'halfDiminished7',
     ['m7b5', 'min7b5', '-7b5', 'ø', 'ø7'],
     [0, 3, 6, 10],
     ['1', 'b3', 'b5', 'b7'],
   ),
-  seventh('diminished7', ['°7', 'dim7', 'o7'], [0, 3, 6, 9], ['1', 'b3', 'b5', 'bb7']),
+  tetrad('diminished7', ['°7', 'dim7', 'o7'], [0, 3, 6, 9], ['1', 'b3', 'b5', 'bb7']),
+  // 六和弦：大三/小三 + 大六度。4 音 3 转位与七和弦同形，复用七和弦指法表
+  // （category: 'seventh'）。注意同音集歧义：C6 = Am7、Cm6 = Am7b5（识别侧
+  // 按低音优先消歧，见 chord-detect.ts）。
+  tetrad('major6', ['6'], [0, 4, 7, 9], ['1', '3', '5', '6']),
+  tetrad('minor6', ['m6', 'min6', '-6'], [0, 3, 7, 9], ['1', 'b3', '5', '6']),
 ]
 
 const BY_ID = new Map<string, ChordQuality>(CHORD_QUALITIES.map((q) => [q.id, q]))

@@ -1728,6 +1728,13 @@ input[type='range']::-moz-range-thumb {
   gap: 8px;
 }
 
+/* display:flex 会压过 UA 的 [hidden]{display:none}，按元素补隐藏规则
+   （手碟/识别模式下隐藏根音/类型/转位/手别选择行依赖此规则） */
+.chordf__row[hidden],
+.chordf__seg[hidden] {
+  display: none;
+}
+
 .chordf__group {
   display: flex;
   align-items: center;
@@ -2332,6 +2339,18 @@ input[type='range']::-moz-range-thumb {
 }
 
 .chordf__handpan[hidden] {
+  display: none;
+}
+
+/* 识别模式：识别历史 chips 行（点击跳浏览该和弦） */
+.chordf__identify {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.chordf__identify[hidden] {
   display: none;
 }
 

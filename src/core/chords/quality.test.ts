@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { CHORD_QUALITIES, allInversions, getChordQuality } from './quality'
 
 describe('CHORD_QUALITIES', () => {
-  it('覆盖规格的 10 种和弦质量 + 减七（魔方图转调层）', () => {
+  it('覆盖规格的 10 种和弦质量 + 减七（魔方图转调层）+ 2 种六和弦', () => {
     expect(CHORD_QUALITIES.map((q) => q.id)).toEqual([
       'major',
       'minor',
@@ -16,6 +16,8 @@ describe('CHORD_QUALITIES', () => {
       'minor7',
       'halfDiminished7',
       'diminished7',
+      'major6',
+      'minor6',
     ])
   })
 
@@ -61,6 +63,19 @@ describe('CHORD_QUALITIES', () => {
     expect(getChordQuality('minor7').intervals).toEqual([0, 3, 7, 10])
     expect(getChordQuality('halfDiminished7').intervals).toEqual([0, 3, 6, 10])
     expect(getChordQuality('diminished7').intervals).toEqual([0, 3, 6, 9])
+  })
+
+  it('六和弦：大三/小三 + 大六度，复用七和弦指法类别', () => {
+    const major6 = getChordQuality('major6')
+    expect(major6.intervals).toEqual([0, 4, 7, 9])
+    expect(major6.noteDegrees).toEqual(['1', '3', '5', '6'])
+    expect(major6.symbols[0]).toBe('6')
+    expect(major6.category).toBe('seventh') // 4 音 3 转位与七和弦同形
+    const minor6 = getChordQuality('minor6')
+    expect(minor6.intervals).toEqual([0, 3, 7, 9])
+    expect(minor6.noteDegrees).toEqual(['1', 'b3', '5', '6'])
+    expect(minor6.symbols).toContain('m6')
+    expect(minor6.category).toBe('seventh')
   })
 
   it('getChordQuality：未知 id 抛 RangeError', () => {
