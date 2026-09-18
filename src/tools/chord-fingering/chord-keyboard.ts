@@ -41,6 +41,10 @@ export interface ChordKeyboard {
   paint(lit: ReadonlyMap<number, KeyPaint>): void
   /** 清除全部点亮 / 徽标 / 按下态 */
   clear(): void
+  /** 释放全部虚拟输入状态（触摸按住 / 鼠标锁定）：换题、切模式时调用，
+   *  保证组件内部状态与工具侧 held 集合一致——否则上一题锁定的键还留在
+   *  组件里，第一下点击会变成"解锁"，看起来像键盘失灵 / 与题目不同步 */
+  releaseAll(): void
   /** 订阅虚拟键盘输入：down = true 按下 / false 抬起；返回取消订阅函数 */
   onKeyInput(handler: (pitch: number, down: boolean) => void): () => void
 }
@@ -55,6 +59,11 @@ export function buildChordKeyboard(): ChordKeyboard {
     const pitch = Number(keyEl.dataset.pitch)
     if (Number.isInteger(pitch)) keyEls.set(pitch, keyEl)
   }
+
+  /** 触摸 / 手写笔正在按住的键（抬起即释放）；置组件作用域以便 releaseAll 复位 */
+  const touchHeld = new Set<number>()
+  /** 鼠标点击锁定的键（再点一次释放）——鼠标只有一个指针，无法同时按住多键 */
+  const mouseLatched = new Set<number>()
 
   return {
     el: root,
@@ -108,12 +117,13 @@ export function buildChordKeyboard(): ChordKeyboard {
       piano.setPressed([])
     },
 
+    releaseAll() {
+      touchHeld.clear()
+      mouseLatched.clear()
+    },
+
     onKeyInput(handler) {
       const handlers: { keyEl: HTMLElement; pitch: number; off: () => void }[] = []
-      /** 触摸 / 手写笔正在按住的键（抬起即释放） */
-      const touchHeld = new Set<number>()
-      /** 鼠标点击锁定的键（再点一次释放）——鼠标只有一个指针，无法同时按住多键 */
-      const mouseLatched = new Set<number>()
       const send = (pitch: number, down: boolean): void => handler(pitch, down)
       for (const [pitch, keyEl] of keyEls) {
         const down = (e: PointerEvent): void => {

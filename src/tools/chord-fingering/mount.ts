@@ -142,6 +142,14 @@ export function mountChordFingering(host: HTMLElement): () => void {
   let midiHeld: Set<number> = new Set()
   let stopMidi: (() => void) | null = null
 
+  /** 清空虚拟键盘输入并释放键盘组件的锁定/触摸态。只清 virtualHeld 不够——
+   *  组件内部还锁着旧键，下一题后第一下点击会变成"解锁"，键盘像失灵。
+   *  MIDI 实际按住的键不在此清（硬件状态真实存在，下一个 MIDI 事件会重新同步）。 */
+  function releaseVirtualInput(): void {
+    virtualHeld.clear()
+    keyboard.releaseAll()
+  }
+
   // —— DOM 骨架 ——
   const searchInput = el('input', {
     class: 'chordf__search',
@@ -614,7 +622,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     streak = 0
     total = 0
     hintOn = false
-    virtualHeld.clear()
+    releaseVirtualInput()
     engine.releaseAll()
     examBar.hidden = false
     hintBtn.hidden = mode !== 'exam'
@@ -649,8 +657,11 @@ export function mountChordFingering(host: HTMLElement): () => void {
     question = nextExamQuestion(state.hand, state.transpose)
     hintOn = false
     hintBtn.classList.remove('is-active')
-    virtualHeld.clear()
+    releaseVirtualInput()
     engine.setQuestion(question.pitches)
+    // 上一题的按住态不带入新题：否则点下一题的瞬间键盘还亮着旧键（MIDI
+    // 实际按住的键在下一个 MIDI 事件重新同步）
+    engine.releaseAll()
     renderPractice()
     renderExamBar()
   }
@@ -772,13 +783,14 @@ export function mountChordFingering(host: HTMLElement): () => void {
       }).fingers,
     }
     hintOn = false
-    virtualHeld.clear()
+    releaseVirtualInput()
     questionStartedAt = performance.now()
     questionHadWrong = false
     questionFailReported = false
     questionSettled = false
     predictMissSeen = false
     engine.setQuestion(question.pitches)
+    engine.releaseAll() // 上一题按住态不带入新题（同 ask）
     renderWheel()
     renderExamBar()
   }
@@ -829,7 +841,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
       }
       question = null
       engine.reset()
-      virtualHeld.clear()
+      releaseVirtualInput()
       trainerState = null
       questionSettled = false
     }
@@ -905,7 +917,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     hintOn = false
     progression = null
     engine.reset()
-    virtualHeld.clear()
+    releaseVirtualInput()
     examBar.hidden = true
     renderAll()
   }
@@ -921,7 +933,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     hintOn = false
     progression = null
     engine.reset()
-    virtualHeld.clear()
+    releaseVirtualInput()
     identifyHistory = []
     lastIdentified = null
     identifyHeldCount = 0
@@ -941,7 +953,7 @@ export function mountChordFingering(host: HTMLElement): () => void {
     hintOn = false
     progression = null
     engine.reset()
-    virtualHeld.clear()
+    releaseVirtualInput()
     examBar.hidden = true
     renderAll()
   }

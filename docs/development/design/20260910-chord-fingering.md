@@ -340,3 +340,27 @@ C Eb G A，音程 0-3-7-9，符号 `m6`/`min6`/`-6`）。解析（SUFFIX_TABLE �
 （Cm(maj7) 不在 13 类）、12 根音 × 13 质量 × 全部转位扫描（识别结果与输入
 同音集、输入必在主判∪别解中、低音=根音时转位还原）；六和弦侧 quality/parse
 用例 + notes/fingering 现有参数化测试自动覆盖新质量。
+
+### 3.16 「下一题」与键盘状态同步（2026-09-19 增补，修复）
+
+用户反馈：点「下一题」后键盘与题目不同步。根因是三处状态只清了一半——
+
+- `ChordPracticeEngine.setQuestion` 只重置 wrong/solved，**held 保留**：点下一题
+  的瞬间键盘还亮着上一题按住的键（琥珀），直到下一次输入事件才刷新；
+- `ChordKeyboard` 组件内部维护触摸按住（touchHeld）与鼠标锁定（mouseLatched）
+  两个集合，但**没有对外的复位接口**：`ask()` 只清工具侧 `virtualHeld`，组件
+  还锁着旧键——用户再点该键的第一下是「解锁」（无任何可见反应），要点两下
+  才能出声，像键盘失灵；
+- 该残留**跨模式**存在（浏览锁定的键切到手碟/识别后同样卡住第一下点击）。
+
+修复：`ChordKeyboard` 新增 `releaseAll()`（清 touchHeld + mouseLatched，两个
+集合上提到组件作用域）；mount 侧新增 `releaseVirtualInput()`（清 virtualHeld +
+调 keyboard.releaseAll），替换全部 7 处裸 `virtualHeld.clear()`（ask / askWheel /
+startPractice / exitPractice / enterHandpan / enterIdentify / setWheelMode）；
+`ask()` 与 `askWheel()` 在 `setQuestion` 后追加 `engine.releaseAll()`——上一题
+按住态一律不带入新题（MIDI 实际按住的键无法也不应伪释放，下一个 MIDI 事件
+经 syncHeld 重新同步）。
+
+验证：`scripts/probe-next-sync.mjs`（无头 Edge）——跟弹模式锁 4 键点下一题后
+①点亮锁定键 ≤ 3（最多新题目标半亮，不残留 held 全亮）②单击 C4 立即生效
+③再点熄灭；浏览→手碟→浏览切换后单击立即生效。
